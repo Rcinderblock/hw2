@@ -2,21 +2,16 @@
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+SUMMARY_MAX_CHARS = 250
+RESPONSE_MAX_CHARS = 400
+
 
 class TextAnalysis(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
-    summary: str
+    summary: str = Field(min_length=1, max_length=SUMMARY_MAX_CHARS)
     key_points: list[str] = Field(min_length=3, max_length=3)
-    helpful_response: str
-
-    @field_validator("summary", "helpful_response")
-    @classmethod
-    def not_blank(cls, value: str) -> str:
-        value = value.strip()
-        if not value:
-            raise ValueError("must not be blank")
-        return value
+    helpful_response: str = Field(min_length=1, max_length=RESPONSE_MAX_CHARS)
 
     @field_validator("key_points")
     @classmethod

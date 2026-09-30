@@ -10,6 +10,7 @@ from openai import OpenAIError
 
 from llm_client import LLMClient
 from pipeline import process_text
+from prompts import DEFAULT_PROMPT_VARIANT, PROMPT_VARIANTS
 
 EXAMPLES_DIR = Path(__file__).parent / "sample_inputs"
 
@@ -19,8 +20,18 @@ def parse_args() -> argparse.Namespace:
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--text", help="Text to process")
     source.add_argument("--file", type=Path, help="UTF-8 text file to process")
-    source.add_argument("--demo", action="store_true", help="Process three sample texts")
-    parser.add_argument("--output", type=Path, help="Write JSON results to this file")
+    source.add_argument(
+        "--demo", action="store_true", help="Process three sample texts"
+    )
+    parser.add_argument(
+        "--output", type=Path, help="Write JSON results to this file"
+    )
+    parser.add_argument(
+        "--prompt-variant",
+        choices=PROMPT_VARIANTS,
+        default=DEFAULT_PROMPT_VARIANT,
+        help="Prompt formulation to use",
+    )
     return parser.parse_args()
 
 
@@ -37,7 +48,9 @@ def load_inputs(args: argparse.Namespace) -> list[tuple[str, str]]:
 
 def main() -> int:
     args = parse_args()
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+    logging.basicConfig(
+        level=logging.INFO, format="%(levelname)s: %(message)s"
+    )
     load_dotenv()
 
     try:
@@ -51,7 +64,7 @@ def main() -> int:
     for name, text in inputs:
         try:
             logging.info("Processing %s", name)
-            analysis = process_text(text, client)
+            analysis = process_text(text, client, args.prompt_variant)
             results.append({"name": name, **analysis.model_dump()})
         except (OpenAIError, ValueError) as exc:
             logging.error("Failed to process %s: %s", name, exc)
@@ -60,8 +73,12 @@ def main() -> int:
     rendered = json.dumps(results, ensure_ascii=False, indent=2)
     print(rendered)
     if args.output:
-        args.output.parent.mkdir(parents=True, exist_ok=True)
-        args.output.write_text(rendered + "\n", encoding="utf-8")
+        try:
+            args.output.parent.mkdir(parents=True, exist_ok=True)
+            args.output.write_text(rendered + "\n", encoding="utf-8")
+        except OSError as exc:
+            logging.error("Cannot write output: %s", exc)
+            return 1
 
     return 1 if any("error" in result for result in results) else 0
 
