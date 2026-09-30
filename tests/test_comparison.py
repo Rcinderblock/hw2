@@ -12,8 +12,10 @@ from prompts import PROMPT_VARIANTS, build_user_prompt
 VALID_RESPONSE = json.dumps(
     {
         "summary": "Кратко",
+        "category": "request",
+        "sentiment": "neutral",
         "key_points": ["Один", "Два", "Три"],
-        "helpful_response": "Ответ",
+        "final_answer": "Ответ",
     }
 )
 INPUTS = [

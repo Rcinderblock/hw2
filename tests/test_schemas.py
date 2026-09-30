@@ -10,8 +10,10 @@ from schemas import RESPONSE_MAX_CHARS, SUMMARY_MAX_CHARS, TextAnalysis
 def valid_result() -> dict:
     return {
         "summary": "Кратко",
+        "category": "request",
+        "sentiment": "neutral",
         "key_points": ["Один", "Два", "Три"],
-        "helpful_response": "Ответ",
+        "final_answer": "Ответ",
     }
 
 
@@ -20,16 +22,16 @@ class SchemaTests(unittest.TestCase):
         payload = valid_result()
         payload.update(
             summary="я" * SUMMARY_MAX_CHARS,
-            helpful_response="я" * RESPONSE_MAX_CHARS,
+            final_answer="я" * RESPONSE_MAX_CHARS,
         )
         result = TextAnalysis.model_validate(payload)
         self.assertEqual(len(result.summary), SUMMARY_MAX_CHARS)
-        self.assertEqual(len(result.helpful_response), RESPONSE_MAX_CHARS)
+        self.assertEqual(len(result.final_answer), RESPONSE_MAX_CHARS)
 
     def test_overlong_outputs_are_rejected_without_truncation(self) -> None:
         for field, limit in (
             ("summary", SUMMARY_MAX_CHARS),
-            ("helpful_response", RESPONSE_MAX_CHARS),
+            ("final_answer", RESPONSE_MAX_CHARS),
         ):
             with self.subTest(field=field):
                 payload = valid_result()
@@ -48,7 +50,7 @@ class SchemaTests(unittest.TestCase):
     def test_blank_fields_and_duplicate_points_are_rejected(self) -> None:
         cases = (
             {"summary": "   "},
-            {"helpful_response": "\n"},
+            {"final_answer": "\n"},
             {"key_points": ["Один", "Два", " "]},
             {"key_points": ["Один", " один ", "Три"]},
             {"key_points": ["Один", "Два", "Три", "Четыре"]},
@@ -59,6 +61,18 @@ class SchemaTests(unittest.TestCase):
                 payload = {**valid_result(), **changes}
                 with self.assertRaises(ValidationError):
                     TextAnalysis.model_validate(payload)
+
+    def test_unknown_category_and_sentiment_are_rejected(self) -> None:
+        for field in ("category", "sentiment"):
+            with self.subTest(field=field):
+                payload = {**valid_result(), field: "unknown"}
+                with self.assertRaises(ValidationError):
+                    TextAnalysis.model_validate(payload)
+
+    def test_non_string_key_points_are_rejected(self) -> None:
+        payload = {**valid_result(), "key_points": ["Один", 2, "Три"]}
+        with self.assertRaises(ValidationError):
+            TextAnalysis.model_validate(payload)
 
 
 if __name__ == "__main__":

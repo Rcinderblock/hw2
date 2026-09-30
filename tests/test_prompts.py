@@ -17,8 +17,10 @@ class RecordingClient:
         return json.dumps(
             {
                 "summary": "Кратко",
+                "category": "request",
+                "sentiment": "neutral",
                 "key_points": ["Один", "Два", "Три"],
-                "helpful_response": "Ответ",
+                "final_answer": "Ответ",
             }
         )
 

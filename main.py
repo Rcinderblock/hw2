@@ -1,4 +1,4 @@
-"""Command-line entry point for processing one text or three demo texts."""
+"""Command-line entry point for processing one text or demo texts."""
 
 import argparse
 import json
@@ -11,6 +11,7 @@ from openai import OpenAIError
 from llm_client import LLMClient
 from pipeline import process_text
 from prompts import DEFAULT_PROMPT_VARIANT, PROMPT_VARIANTS
+from schemas import CATEGORIES, SENTIMENTS
 
 EXAMPLES_DIR = Path(__file__).parent / "sample_inputs"
 
@@ -21,7 +22,7 @@ def parse_args() -> argparse.Namespace:
     source.add_argument("--text", help="Text to process")
     source.add_argument("--file", type=Path, help="UTF-8 text file to process")
     source.add_argument(
-        "--demo", action="store_true", help="Process three sample texts"
+        "--demo", action="store_true", help="Process sample texts"
     )
     parser.add_argument(
         "--output", type=Path, help="Write JSON results to this file"
@@ -31,6 +32,12 @@ def parse_args() -> argparse.Namespace:
         choices=PROMPT_VARIANTS,
         default=DEFAULT_PROMPT_VARIANT,
         help="Prompt formulation to use",
+    )
+    parser.add_argument(
+        "--category", choices=CATEGORIES, help="Show only this category"
+    )
+    parser.add_argument(
+        "--sentiment", choices=SENTIMENTS, help="Show only this sentiment"
     )
     return parser.parse_args()
 
@@ -65,6 +72,10 @@ def main() -> int:
         try:
             logging.info("Processing %s", name)
             analysis = process_text(text, client, args.prompt_variant)
+            if args.category and analysis.category != args.category:
+                continue
+            if args.sentiment and analysis.sentiment != args.sentiment:
+                continue
             results.append({"name": name, **analysis.model_dump()})
         except (OpenAIError, ValueError) as exc:
             logging.error("Failed to process %s: %s", name, exc)

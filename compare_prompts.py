@@ -18,7 +18,7 @@ EXAMPLES_DIR = Path(__file__).parent / "sample_inputs"
 
 
 def compare_prompts(
-    inputs: list[tuple[str, str]], client: ModelClient, repeats: int = 3
+    inputs: list[tuple[str, str]], client: ModelClient, repeats: int = 1
 ) -> dict:
     if (
         repeats < 1
@@ -64,9 +64,7 @@ def compare_prompts(
             "mean_summary_chars": mean(len(r["summary"]) for r in valid)
             if valid
             else None,
-            "mean_response_chars": mean(
-                len(r["helpful_response"]) for r in valid
-            )
+            "mean_response_chars": mean(len(r["final_answer"]) for r in valid)
             if valid
             else None,
         }
@@ -102,7 +100,7 @@ def compare_prompts(
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Compare prompt formulations")
-    parser.add_argument("--repeats", type=int, default=3)
+    parser.add_argument("--repeats", type=int, default=1)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     if args.repeats < 1:

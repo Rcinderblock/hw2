@@ -4,12 +4,16 @@ import os
 
 from openai import OpenAI
 
+from schemas import TextAnalysis
+
 
 class LLMClient:
     def __init__(self) -> None:
         api_key = os.getenv("OPENAI_API_KEY")
         if not api_key or api_key == "your_api_key_here":
-            raise ValueError("Set OPENAI_API_KEY in the environment or .env file")
+            raise ValueError(
+                "Set OPENAI_API_KEY in the environment or .env file"
+            )
 
         self.model = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
         base_url = os.getenv("OPENAI_BASE_URL") or None
@@ -20,6 +24,14 @@ class LLMClient:
             model=self.model,
             instructions=system_prompt,
             input=user_prompt,
+            text={
+                "format": {
+                    "type": "json_schema",
+                    "name": "text_analysis",
+                    "strict": True,
+                    "schema": TextAnalysis.model_json_schema(),
+                }
+            },
             store=False,
         )
         return response.output_text or ""
