@@ -87,7 +87,10 @@ def main() -> int:
             results.append({"name": name, **analysis.model_dump()})
         except (OpenAIError, ValueError) as exc:
             logging.error("Failed to process %s: %s", name, exc)
-            results.append({"name": name, "error": str(exc)})
+            record = {"name": name, "error": str(exc)}
+            if partial := getattr(exc, "partial_result", None):
+                record["partial_result"] = partial
+            results.append(record)
 
     rendered = json.dumps(results, ensure_ascii=False, indent=2)
     print(rendered)

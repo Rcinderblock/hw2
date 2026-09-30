@@ -44,7 +44,8 @@ class ComparisonTests(unittest.TestCase):
 
     def test_invalid_outputs_are_counted_and_preserved(self) -> None:
         client = ScriptedClient(
-            [*success_replies(), "not json", *success_replies()] * 3
+            [*success_replies(), "not json", "not json", *success_replies()]
+            * 3
         )
         report = compare_prompts(INPUTS, client, repeats=1)
         self.assertEqual(
@@ -86,6 +87,7 @@ class ComparisonTests(unittest.TestCase):
                 replies = [
                     *success_replies()[:index],
                     failure,
+                    *([] if isinstance(failure, Exception) else [failure]),
                     *success_replies() * 8,
                 ]
                 report = compare_prompts(INPUTS, ScriptedClient(replies))
@@ -113,7 +115,7 @@ class ComparisonTests(unittest.TestCase):
 
     def test_no_winner_when_every_model_output_is_invalid(self) -> None:
         report = compare_prompts(
-            INPUTS, ScriptedClient(["bad"] * 9), repeats=1
+            INPUTS, ScriptedClient(["bad"] * 18), repeats=1
         )
         self.assertTrue(report["comparison_complete"])
         self.assertEqual(report["best_format_variants"], [])

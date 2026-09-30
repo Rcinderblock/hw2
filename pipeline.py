@@ -4,6 +4,7 @@ import json
 import logging
 from typing import Protocol, TypeVar
 
+from openai import OpenAIError
 from pydantic import BaseModel, ValidationError
 
 from prompts import (
@@ -13,6 +14,7 @@ from prompts import (
     build_answer_system_prompt,
     build_answer_user_prompt,
     build_classification_user_prompt,
+    build_fallback_system_prompt,
     build_self_check_user_prompt,
     build_user_prompt,
     get_prompt_variant,
@@ -28,6 +30,7 @@ from schemas import (
 
 logger = logging.getLogger(__name__)
 ResponseModel = TypeVar("ResponseModel", bound=BaseModel)
+MAX_MODEL_RESPONSE_CHARS = 12000
 
 
 class ModelClient(Protocol):
@@ -46,6 +49,15 @@ class InvalidModelResponse(ValueError):
     def __init__(self, message: str, response: str) -> None:
         super().__init__(message)
         self.response = response
+        self.partial_result: dict = {}
+
+
+class PipelineAPIError(OpenAIError):
+    """Expose the failed stage and the already validated data."""
+
+    def __init__(self, message: str, partial_result: dict) -> None:
+        super().__init__(message)
+        self.partial_result = partial_result.copy()
 
 
 def describe_schema_error(exc: ValidationError) -> str:
@@ -79,6 +91,11 @@ def describe_schema_error(exc: ValidationError) -> str:
 def parse_model_response(
     response: str, schema: type[ResponseModel], stage: str
 ) -> ResponseModel:
+    if len(response) > MAX_MODEL_RESPONSE_CHARS:
+        raise InvalidModelResponse(
+            f"{stage}: ответ превышает {MAX_MODEL_RESPONSE_CHARS} символов",
+            response,
+        )
     if not response.strip():
         raise InvalidModelResponse(
             f"{stage}: модель вернула пустой ответ", response
@@ -90,6 +107,11 @@ def parse_model_response(
         raise InvalidModelResponse(
             f"{stage}: Некорректный JSON: строка {exc.lineno}, "
             f"столбец {exc.colno}",
+            response,
+        ) from exc
+    except RecursionError as exc:
+        raise InvalidModelResponse(
+            f"{stage}: Некорректный JSON: слишком глубокая вложенность",
             response,
         ) from exc
 
@@ -104,6 +126,40 @@ def parse_model_response(
     return result
 
 
+def request_step(
+    client: ModelClient,
+    system_prompt: str,
+    user_prompt: str,
+    schema: type[ResponseModel],
+    stage: str,
+    partial_result: dict,
+) -> ResponseModel:
+    for attempt in range(2):
+        try:
+            response = client.generate(
+                system_prompt, user_prompt, response_schema=schema
+            )
+        except OpenAIError as exc:
+            logger.error("%s: %s", stage, exc)
+            raise PipelineAPIError(f"{stage}: {exc}", partial_result) from exc
+        try:
+            result = parse_model_response(response, schema, stage)
+            if attempt:
+                logger.info("%s: запасной промпт восстановил формат", stage)
+            return result
+        except InvalidModelResponse as exc:
+            logger.warning("%s", exc)
+            if attempt:
+                exc.partial_result = partial_result.copy()
+                logger.error("%s: запасной промпт не помог", stage)
+                raise
+            logger.info("%s: повтор с запасным промптом", stage)
+            system_prompt = build_fallback_system_prompt(
+                system_prompt, str(exc)
+            )
+    raise AssertionError("Unreachable: every step returns or raises")
+
+
 def process_text(
     text: str,
     client: ModelClient,
@@ -114,23 +170,23 @@ def process_text(
 
     prompt = get_prompt_variant(prompt_variant)
     logger.info("Шаг 1/5: извлечение смысла, промпт %s", prompt_variant)
-    response = client.generate(
+    meaning = request_step(
+        client,
         prompt.system_prompt,
         build_user_prompt(text, prompt_variant),
-        response_schema=MeaningExtraction,
-    )
-    meaning = parse_model_response(
-        response, MeaningExtraction, "Извлечение смысла"
+        MeaningExtraction,
+        "Извлечение смысла",
+        {},
     )
 
     logger.info("Шаг 2/5: классификация по извлечённому смыслу")
-    response = client.generate(
+    classification = request_step(
+        client,
         CLASSIFICATION_SYSTEM_PROMPT,
         build_classification_user_prompt(text, meaning),
-        response_schema=RequestClassification,
-    )
-    classification = parse_model_response(
-        response, RequestClassification, "Классификация"
+        RequestClassification,
+        "Классификация",
+        meaning.model_dump(),
     )
     logger.info(
         "Категория: %s; цель: %s",
@@ -146,23 +202,23 @@ def process_text(
     # Only a validated category may select the answer instructions.
     answer_prompt = build_answer_system_prompt(fields.category)
     logger.info("Шаг 4/5: генерация ответа, категория %s", fields.category)
-    response = client.generate(
+    answer = request_step(
+        client,
         answer_prompt,
         build_answer_user_prompt(text, fields),
-        response_schema=GeneratedAnswer,
-    )
-    answer = parse_model_response(
-        response, GeneratedAnswer, "Генерация ответа"
+        GeneratedAnswer,
+        "Генерация ответа",
+        fields.model_dump(),
     )
 
     logger.info("Шаг 5/5: проверка результата по исходному тексту")
-    response = client.generate(
+    self_check = request_step(
+        client,
         SELF_CHECK_SYSTEM_PROMPT,
         build_self_check_user_prompt(text, fields, answer),
-        response_schema=SelfCheckResult,
-    )
-    self_check = parse_model_response(
-        response, SelfCheckResult, "Проверка результата"
+        SelfCheckResult,
+        "Проверка результата",
+        {**fields.model_dump(), **answer.model_dump()},
     )
     result = TextAnalysis(
         **fields.model_dump(), **answer.model_dump(), self_check=self_check

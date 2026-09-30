@@ -16,6 +16,7 @@ from prompts import (
     ANSWER_INSTRUCTIONS,
     ANSWER_SYSTEM_PROMPT,
     CLASSIFICATION_SYSTEM_PROMPT,
+    FALLBACK_PROMPT,
     PROMPT_VARIANTS,
     SELF_CHECK_SYSTEM_PROMPT,
 )
@@ -53,8 +54,12 @@ def compare_prompts(
                         error=str(exc),
                         raw_response=exc.response,
                     )
+                    if exc.partial_result:
+                        run["partial_result"] = exc.partial_result
                 except OpenAIError as exc:
                     run.update(status="api_error", error=str(exc))
+                    if partial := getattr(exc, "partial_result", None):
+                        run["partial_result"] = partial
                 runs.append(run)
 
     statistics = {}
@@ -106,6 +111,7 @@ def compare_prompts(
         "answer_system_prompt": ANSWER_SYSTEM_PROMPT,
         "classification_system_prompt": CLASSIFICATION_SYSTEM_PROMPT,
         "self_check_system_prompt": SELF_CHECK_SYSTEM_PROMPT,
+        "fallback_prompt": FALLBACK_PROMPT,
         "answer_instructions": ANSWER_INSTRUCTIONS,
         "repeats": repeats,
         "inputs": [{"name": name, "text": text} for name, text in inputs],

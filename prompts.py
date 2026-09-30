@@ -172,6 +172,20 @@ ANSWER_INSTRUCTIONS: dict[Category, str] = {
 # Retain the Day 1 name for callers using the default instructions.
 SYSTEM_PROMPT = PROMPT_VARIANTS[DEFAULT_PROMPT_VARIANT].system_prompt
 
+FALLBACK_PROMPT = (
+    "The previous attempt did not pass local format validation. "
+    "Generate the result again from the supplied source and context. "
+    "Return only one JSON object matching the required schema: "
+    "all required keys, exact types, no markdown or extra keys. "
+    "Respect every length limit and exactly three distinct key points "
+    "when that field is requested. Do not invent facts to fill fields. "
+    "Validation problem: {error}"
+)
+
+
+def build_fallback_system_prompt(system_prompt: str, error: str) -> str:
+    return system_prompt + "\n" + FALLBACK_PROMPT.format(error=error)
+
 
 def get_prompt_variant(name: str) -> PromptVariant:
     try:

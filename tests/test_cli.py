@@ -134,7 +134,7 @@ class CLITests(unittest.TestCase):
 
     def test_broken_json_does_not_stop_remaining_examples(self) -> None:
         code, results, _ = self.run_main(
-            ["{bad json", *success_replies() * 9], []
+            ["{bad json", "{bad json", *success_replies() * 9], []
         )
         self.assertEqual(code, 1)
         self.assertIn("Некорректный JSON", results[0]["error"])
@@ -148,6 +148,7 @@ class CLITests(unittest.TestCase):
         code, results, _ = self.run_main(
             [
                 success_replies()[0],
+                json.dumps(classification),
                 json.dumps(classification),
                 *success_replies() * 9,
             ],
@@ -171,12 +172,18 @@ class CLITests(unittest.TestCase):
                     [
                         *success_replies()[:index],
                         failure,
+                        *([] if isinstance(failure, Exception) else [failure]),
                         *success_replies() * 9,
                     ],
                     [],
                 )
                 self.assertEqual(code, 1)
                 self.assertIn("error", results[0])
+                partial = results[0]["partial_result"]
+                self.assertIn("summary", partial)
+                self.assertIn("category", partial)
+                self.assertNotIn("self_check", partial)
+                self.assertEqual("final_answer" in partial, index == 3)
                 self.assertEqual(len(results), 10)
                 self.assertTrue(all("final_answer" in r for r in results[1:]))
 
@@ -206,7 +213,7 @@ class CLITests(unittest.TestCase):
         )
         self.assertEqual(code, 1)
         self.assertEqual(len(results), 1)
-        self.assertEqual(results[0]["error"], "Unavailable")
+        self.assertIn("Unavailable", results[0]["error"])
 
 
 if __name__ == "__main__":

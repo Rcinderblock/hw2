@@ -90,21 +90,21 @@ class PipelineTests(unittest.TestCase):
             for index, stage in enumerate(STAGES):
                 with self.subTest(response=response, stage=stage):
                     client = ScriptedClient(
-                        [*success_replies()[:index], response]
+                        [*success_replies()[:index], response, response]
                     )
                     with self.assertRaises(InvalidModelResponse) as caught:
                         process_text("Текст", client)
                     self.assertIn(stage, str(caught.exception))
                     self.assertIn(message, str(caught.exception))
                     self.assertEqual(caught.exception.response, response)
-                    self.assertEqual(len(client.calls), index + 1)
+                    self.assertEqual(len(client.calls), index + 2)
 
     def test_wrong_number_of_points_stops_before_classification(self) -> None:
         response = json.dumps(meaning_payload(key_points=["Один"]))
-        client = ScriptedClient([response])
+        client = ScriptedClient([response, response])
         with self.assertRaisesRegex(InvalidModelResponse, "key_points"):
             process_text("Текст", client)
-        self.assertEqual(len(client.calls), 1)
+        self.assertEqual(len(client.calls), 2)
 
     def test_empty_input_does_not_call_model(self) -> None:
         client = ScriptedClient([])
@@ -131,7 +131,11 @@ class PipelineTests(unittest.TestCase):
                 with self.subTest(stage=STAGES[index], field=field):
                     payload = json.loads(response)
                     del payload[field]
-                    replies = [*valid_replies[:index], json.dumps(payload)]
+                    replies = [
+                        *valid_replies[:index],
+                        json.dumps(payload),
+                        json.dumps(payload),
+                    ]
                     with self.assertRaisesRegex(
                         InvalidModelResponse, f"{field}: обязательное поле"
                     ):
@@ -158,7 +162,11 @@ class PipelineTests(unittest.TestCase):
                     process_text(
                         "Текст",
                         ScriptedClient(
-                            [*replies[:index], json.dumps(payload)]
+                            [
+                                *replies[:index],
+                                json.dumps(payload),
+                                json.dumps(payload),
+                            ]
                         ),
                     )
 
@@ -172,14 +180,17 @@ class PipelineTests(unittest.TestCase):
                 ):
                     process_text(
                         "Текст",
-                        ScriptedClient([*success_replies()[:index], "[]"]),
+                        ScriptedClient(
+                            [*success_replies()[:index], "[]", "[]"]
+                        ),
                     )
 
     def test_unknown_category_stops_before_answer_generation(self) -> None:
-        client = ScriptedClient(success_replies(category="unknown")[:2])
+        replies = success_replies(category="unknown")[:2]
+        client = ScriptedClient([*replies, replies[-1]])
         with self.assertRaisesRegex(InvalidModelResponse, "category"):
             process_text("Текст", client)
-        self.assertEqual(len(client.calls), 2)
+        self.assertEqual(len(client.calls), 3)
 
     def test_api_error_in_any_model_step_is_propagated(self) -> None:
         for index in range(4):
