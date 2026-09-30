@@ -20,6 +20,7 @@ from prompts import (
     PROMPT_VARIANTS,
     SELF_CHECK_SYSTEM_PROMPT,
 )
+from utils import load_sample_inputs, validate_output_path, write_json_output
 
 EXAMPLES_DIR = Path(__file__).parent / "sample_inputs"
 
@@ -139,17 +140,14 @@ def main() -> int:
     )
     load_dotenv()
     try:
-        inputs = [
-            (path.stem, path.read_text(encoding="utf-8"))
-            for path in sorted(EXAMPLES_DIR.glob("*.txt"))
-        ]
+        inputs = load_sample_inputs(EXAMPLES_DIR)
+        validate_output_path(args.output, list(EXAMPLES_DIR.glob("*")))
         client = LLMClient()
         report = compare_prompts(inputs, client, args.repeats)
         rendered = json.dumps(report, ensure_ascii=False, indent=2)
         print(rendered)
         if args.output:
-            args.output.parent.mkdir(parents=True, exist_ok=True)
-            args.output.write_text(rendered + "\n", encoding="utf-8")
+            write_json_output(args.output, rendered)
     except (OSError, ValueError) as exc:
         logging.error("Cannot complete comparison: %s", exc)
         return 1

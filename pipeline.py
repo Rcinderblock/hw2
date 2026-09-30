@@ -27,6 +27,7 @@ from schemas import (
     TextAnalysis,
     TextClassification,
 )
+from utils import decode_json
 
 logger = logging.getLogger(__name__)
 ResponseModel = TypeVar("ResponseModel", bound=BaseModel)
@@ -69,6 +70,7 @@ def describe_schema_error(exc: ValidationError) -> str:
             "missing": "обязательное поле отсутствует",
             "string_type": "ожидалась строка",
             "list_type": "ожидался список",
+            "bool_type": "ожидалось логическое значение true или false",
             "model_type": "ожидался JSON-объект",
             "extra_forbidden": "лишнее поле",
             "string_too_short": "значение не должно быть пустым",
@@ -102,11 +104,17 @@ def parse_model_response(
         )
 
     try:
-        payload = json.loads(response)
+        payload = decode_json(response)
     except json.JSONDecodeError as exc:
         raise InvalidModelResponse(
             f"{stage}: Некорректный JSON: строка {exc.lineno}, "
             f"столбец {exc.colno}",
+            response,
+        ) from exc
+    except ValueError as exc:
+        raise InvalidModelResponse(
+            f"{stage}: Некорректный JSON: недопустимые значения "
+            "или повторяющиеся ключи",
             response,
         ) from exc
     except RecursionError as exc:

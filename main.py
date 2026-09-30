@@ -12,6 +12,7 @@ from llm_client import LLMClient
 from pipeline import process_text
 from prompts import DEFAULT_PROMPT_VARIANT, PROMPT_VARIANTS
 from schemas import CATEGORIES, SENTIMENTS
+from utils import load_sample_inputs, validate_output_path, write_json_output
 
 EXAMPLES_DIR = Path(__file__).parent / "sample_inputs"
 
@@ -44,10 +45,7 @@ def parse_args() -> argparse.Namespace:
 
 def load_inputs(args: argparse.Namespace) -> list[tuple[str, str]]:
     if args.demo:
-        return [
-            (path.stem, path.read_text(encoding="utf-8"))
-            for path in sorted(EXAMPLES_DIR.glob("*.txt"))
-        ]
+        return load_sample_inputs(EXAMPLES_DIR)
     if args.file:
         return [(args.file.stem, args.file.read_text(encoding="utf-8"))]
     return [("input", args.text)]
@@ -62,6 +60,14 @@ def main() -> int:
 
     try:
         inputs = load_inputs(args)
+        source_paths = (
+            list(EXAMPLES_DIR.glob("*"))
+            if args.demo
+            else [args.file]
+            if args.file
+            else []
+        )
+        validate_output_path(args.output, source_paths)
         client = LLMClient()
     except (OSError, ValueError) as exc:
         logging.error("Cannot start: %s", exc)
@@ -96,8 +102,7 @@ def main() -> int:
     print(rendered)
     if args.output:
         try:
-            args.output.parent.mkdir(parents=True, exist_ok=True)
-            args.output.write_text(rendered + "\n", encoding="utf-8")
+            write_json_output(args.output, rendered)
         except OSError as exc:
             logging.error("Cannot write output: %s", exc)
             return 1

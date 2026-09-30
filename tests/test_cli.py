@@ -21,6 +21,49 @@ import main
 
 
 class CLITests(unittest.TestCase):
+    def test_empty_sample_directory_fails_before_creating_a_client(self):
+        with tempfile.TemporaryDirectory() as directory:
+            for module, argv in (
+                (main, ["main.py", "--demo"]),
+                (compare_prompts, ["compare_prompts.py"]),
+            ):
+                with (
+                    self.subTest(module=module.__name__),
+                    patch.object(module, "EXAMPLES_DIR", Path(directory)),
+                    patch.object(module, "LLMClient") as client,
+                    patch("sys.argv", argv),
+                    self.assertLogs(level="ERROR") as captured,
+                ):
+                    self.assertEqual(module.main(), 1)
+                    client.assert_not_called()
+                    self.assertIn(
+                        "Нет входных текстов", "\n".join(captured.output)
+                    )
+
+    def test_output_cannot_overwrite_the_source_or_demo_labels(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "input.txt"
+            source.write_text("Важный исходный текст", encoding="utf-8")
+            labels = root / "expected_categories.json"
+            labels.write_text('{"input": "support"}', encoding="utf-8")
+            for module, argv, target in (
+                (main, ["main.py", "--file", str(source)], source),
+                (main, ["main.py", "--demo"], labels),
+                (compare_prompts, ["compare_prompts.py"], labels),
+            ):
+                with self.subTest(module=module.__name__, target=target.name):
+                    original = target.read_bytes()
+                    with (
+                        patch.object(module, "EXAMPLES_DIR", root),
+                        patch.object(module, "LLMClient") as client,
+                        patch("sys.argv", [*argv, "--output", str(target)]),
+                        self.assertLogs(level="ERROR"),
+                    ):
+                        self.assertEqual(module.main(), 1)
+                        client.assert_not_called()
+                    self.assertEqual(target.read_bytes(), original)
+
     def test_demo_uses_selected_prompt_and_saves_ten_results(self) -> None:
         client = ScriptedClient(success_replies() * 10)
         with tempfile.TemporaryDirectory() as directory:

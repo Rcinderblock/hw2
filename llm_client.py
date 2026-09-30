@@ -22,11 +22,22 @@ QUOTA_CODES = {
 }
 
 
+class InvalidAPIResponse(OpenAIError):
+    """The server response does not match the SDK response format."""
+
+
+def is_quota_error(exc: APIStatusError) -> bool:
+    # Compatible servers may put an object or list in the code field.
+    return (
+        isinstance(exc.code, str) and exc.code in QUOTA_CODES
+    ) or exc.type == "insufficient_quota"
+
+
 def is_temporary_error(exc: OpenAIError) -> bool:
     if isinstance(exc, APIConnectionError):
         return True
     if isinstance(exc, APIStatusError):
-        if exc.code in QUOTA_CODES or exc.type == "insufficient_quota":
+        if is_quota_error(exc):
             return False
         if exc.response.headers.get("x-should-retry") == "false":
             return False
@@ -60,7 +71,7 @@ def retry_delay(exc: OpenAIError, attempt: int) -> float:
 def describe_api_error(exc: OpenAIError) -> str:
     # Server messages can echo input or credentials; only report safe metadata.
     if isinstance(exc, APIStatusError):
-        if exc.code in QUOTA_CODES or exc.type == "insufficient_quota":
+        if is_quota_error(exc):
             return "API: закончились средства или достигнут лимит расходов"
         if exc.status_code in (401, 403):
             return (
@@ -70,18 +81,20 @@ def describe_api_error(exc: OpenAIError) -> str:
         return f"API: ошибка HTTP {exc.status_code}"
     if isinstance(exc, APIConnectionError):
         return "API: не удалось подключиться или истекло время ожидания"
+    if isinstance(exc, InvalidAPIResponse):
+        return "API: ответ сервера имеет неправильный формат"
     return "API: запрос не выполнен"
 
 
 class LLMClient:
     def __init__(self) -> None:
-        api_key = os.getenv("OPENAI_API_KEY")
+        api_key = (os.getenv("OPENAI_API_KEY") or "").strip()
         if not api_key or api_key == "your_api_key_here":
             raise ValueError(
                 "Set OPENAI_API_KEY in the environment or .env file"
             )
 
-        self.model = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
+        self.model = (os.getenv("OPENAI_MODEL") or "gpt-4.1-mini").strip()
         base_url = os.getenv("OPENAI_BASE_URL") or None
         # Own the retry budget instead of multiplying it by SDK retries.
         self.client = OpenAI(
@@ -112,7 +125,13 @@ class LLMClient:
                     max_output_tokens=1200,
                     store=False,
                 )
-                return response.output_text or ""
+                try:
+                    text = response.output_text
+                except (AttributeError, TypeError) as exc:
+                    raise InvalidAPIResponse() from exc
+                if text is not None and not isinstance(text, str):
+                    raise InvalidAPIResponse()
+                return text or ""
             except OpenAIError as exc:
                 message = describe_api_error(exc)
                 if not is_temporary_error(exc) or attempt == API_ATTEMPTS:

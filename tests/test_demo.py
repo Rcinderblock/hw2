@@ -2,8 +2,10 @@
 
 import io
 import json
+import tempfile
 import unittest
 from contextlib import redirect_stdout
+from pathlib import Path
 from unittest.mock import patch
 
 import demo
@@ -11,6 +13,29 @@ from schemas import CATEGORIES, TextAnalysis
 
 
 class DemoTests(unittest.TestCase):
+    def test_unknown_scenarios_and_failure_modes_are_rejected(self):
+        for scenario, failure in (("missing", None), (None, "missing")):
+            with self.subTest(scenario=scenario, failure=failure):
+                with self.assertRaisesRegex(ValueError, "Неизвестн"):
+                    demo.run_demo(scenario, failure)
+
+    def test_missing_or_corrupt_fixture_is_a_controlled_startup_error(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "examples").mkdir()
+            fixture = root / "examples" / "demo_cases.json"
+            for content in (None, "not JSON", "[]", '[{"name":"one"}]'):
+                with self.subTest(content=content):
+                    if content is not None:
+                        fixture.write_text(content, encoding="utf-8")
+                    with (
+                        patch.object(demo, "PROJECT_DIR", root),
+                        patch("sys.argv", ["demo.py"]),
+                        redirect_stdout(io.StringIO()),
+                        self.assertLogs(level="ERROR"),
+                    ):
+                        self.assertEqual(demo.main(), 1)
+
     def test_five_prepared_scenarios_finish_and_match_stored_outputs(self):
         report = demo.run_demo()
         self.assertEqual(report["mode"], "offline_fixture")

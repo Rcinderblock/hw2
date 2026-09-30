@@ -6,7 +6,7 @@ import logging
 from pathlib import Path
 
 from openai import OpenAIError
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 from pipeline import process_text
 from schemas import (
@@ -14,7 +14,9 @@ from schemas import (
     MeaningExtraction,
     RequestClassification,
     SelfCheckResult,
+    TextAnalysis,
 )
+from utils import decode_json
 
 PROJECT_DIR = Path(__file__).parent
 FAILURES = (
@@ -26,12 +28,33 @@ FAILURES = (
 )
 
 
+class DemoCase(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    name: str = Field(min_length=1)
+    source_file: str = Field(min_length=1)
+    result: TextAnalysis
+
+
 def load_cases() -> list[dict]:
-    return json.loads(
+    payload = decode_json(
         (PROJECT_DIR / "examples" / "demo_cases.json").read_text(
             encoding="utf-8"
         )
     )
+    if not isinstance(payload, list) or len(payload) < 5:
+        raise ValueError(
+            "Демонстрация должна содержать минимум пять сценариев"
+        )
+    cases = [DemoCase.model_validate(case).model_dump() for case in payload]
+    if len({case["name"] for case in cases}) != len(cases):
+        raise ValueError("Названия демонстрационных сценариев повторяются")
+    for case in cases:
+        source = Path(case["source_file"])
+        if source.name != case["source_file"] or source.suffix != ".txt":
+            raise ValueError(
+                "source_file должен быть именем входного .txt файла"
+            )
+    return cases
 
 
 class FixtureClient:
@@ -83,6 +106,12 @@ class FixtureClient:
 
 def run_demo(scenario: str | None = None, failure: str | None = None) -> dict:
     cases = load_cases()
+    if scenario is not None and scenario not in {
+        case["name"] for case in cases
+    }:
+        raise ValueError(f"Неизвестный сценарий: {scenario}")
+    if failure is not None and failure not in FAILURES:
+        raise ValueError(f"Неизвестная имитация ошибки: {failure}")
     results = []
     for case in cases:
         if scenario and case["name"] != scenario:
@@ -107,16 +136,18 @@ def main() -> int:
     parser = argparse.ArgumentParser(
         description="Offline demo with prepared model replies"
     )
-    parser.add_argument(
-        "--scenario", choices=[case["name"] for case in load_cases()]
-    )
+    parser.add_argument("--scenario", help="Prepared scenario name")
     parser.add_argument("--failure", choices=FAILURES)
     args = parser.parse_args()
     logging.basicConfig(
         level=logging.INFO, format="%(levelname)s: %(message)s"
     )
     logging.info("Демонстрация с заданными ответами: API не вызывается")
-    report = run_demo(args.scenario, args.failure)
+    try:
+        report = run_demo(args.scenario, args.failure)
+    except (OSError, ValueError, RecursionError) as exc:
+        logging.error("Cannot start demo: %s", exc)
+        return 1
     print(json.dumps(report, ensure_ascii=False, indent=2))
     failed = any(
         "error" in result or not result["self_check"]["passed"]

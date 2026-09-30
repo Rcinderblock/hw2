@@ -153,8 +153,35 @@ class APIReliabilityTests(unittest.TestCase):
                 self.generate()
                 self.sleep.assert_called_once_with(1)
 
+    def test_non_string_api_error_codes_do_not_break_error_handling(self):
+        for code in ({"unexpected": "object"}, ["unknown"], 42):
+            with self.subTest(code=code):
+                self.create.reset_mock()
+                self.create.side_effect = [
+                    status_error(503, code=code),
+                    SimpleNamespace(output_text="{}"),
+                ]
+                self.assertEqual(self.generate(), "{}")
+                self.assertEqual(self.create.call_count, 2)
+
 
 class FormatRecoveryTests(unittest.TestCase):
+    def test_ambiguous_or_nonstandard_json_uses_fallback(self):
+        cases = (
+            '{"summary":"first","summary":"second",'
+            '"key_points":["A","B","C"]}',
+            '{"summary":NaN,"key_points":["A","B","C"]}',
+            '{"summary":Infinity,"key_points":["A","B","C"]}',
+            '{"summary":-Infinity,"key_points":["A","B","C"]}',
+            '{"summary":' + "9" * 5000 + ',"key_points":["A","B","C"]}',
+        )
+        for response in cases:
+            with self.subTest(response=response[:60]):
+                client = ScriptedClient([response, *success_replies()])
+                result = process_text("Текст", client)
+                self.assertTrue(result.self_check.passed)
+                self.assertEqual(len(client.calls), 5)
+
     def test_invalid_output_recovers_without_losing_source_or_stage_data(self):
         for index in range(4):
             for bad in ("", "not JSON", "{}", "[]"):
