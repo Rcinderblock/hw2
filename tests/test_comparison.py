@@ -1,23 +1,15 @@
-"""Comparison correctness, without treating fixtures as real model evidence."""
+"""Comparison checks; fixtures do not establish real model quality."""
 
-import json
 import unittest
 from collections import Counter
 
+from helpers import ScriptedClient, success_replies
 from openai import OpenAIError
 
 from compare_prompts import compare_prompts
 from prompts import PROMPT_VARIANTS, build_user_prompt
+from schemas import TextClassification
 
-VALID_RESPONSE = json.dumps(
-    {
-        "summary": "Кратко",
-        "category": "request",
-        "sentiment": "neutral",
-        "key_points": ["Один", "Два", "Три"],
-        "final_answer": "Ответ",
-    }
-)
 INPUTS = [
     ("first", "Первый текст"),
     ("second", "Второй текст"),
@@ -25,26 +17,11 @@ INPUTS = [
 ]
 
 
-class ScriptedClient:
-    model = "test-fixture"
-
-    def __init__(self, replies: list) -> None:
-        self.replies = iter(replies)
-        self.calls = []
-
-    def generate(self, system_prompt: str, user_prompt: str) -> str:
-        self.calls.append((system_prompt, user_prompt))
-        reply = next(self.replies)
-        if isinstance(reply, Exception):
-            raise reply
-        return reply
-
-
 class ComparisonTests(unittest.TestCase):
     def test_all_variants_receive_identical_inputs_and_repeat_counts(
         self,
     ) -> None:
-        client = ScriptedClient([VALID_RESPONSE] * 18)
+        client = ScriptedClient(success_replies() * 18)
         report = compare_prompts(INPUTS, client, repeats=2)
         expected = Counter(
             {
@@ -53,7 +30,13 @@ class ComparisonTests(unittest.TestCase):
                 for _, text in INPUTS
             }
         )
-        self.assertEqual(Counter(client.calls), expected)
+        actual = Counter(
+            (system, user)
+            for system, user, schema in client.calls
+            if schema is TextClassification
+        )
+        self.assertEqual(actual, expected)
+        self.assertEqual(len(client.calls), 36)
         self.assertEqual(len(report["runs"]), 18)
         self.assertEqual(report["model"], "test-fixture")
         self.assertTrue(report["comparison_complete"])
@@ -61,7 +44,7 @@ class ComparisonTests(unittest.TestCase):
 
     def test_invalid_outputs_are_counted_and_preserved(self) -> None:
         client = ScriptedClient(
-            [VALID_RESPONSE, "not json", VALID_RESPONSE] * 3
+            [*success_replies(), "not json", *success_replies()] * 3
         )
         report = compare_prompts(INPUTS, client, repeats=1)
         self.assertEqual(
@@ -82,7 +65,7 @@ class ComparisonTests(unittest.TestCase):
 
     def test_api_errors_prevent_selecting_a_format_winner(self) -> None:
         client = ScriptedClient(
-            [OpenAIError("Unavailable"), VALID_RESPONSE, VALID_RESPONSE] * 3
+            [OpenAIError("Unavailable"), *success_replies() * 2] * 3
         )
         report = compare_prompts(INPUTS, client, repeats=1)
         self.assertFalse(report["comparison_complete"])
@@ -91,6 +74,25 @@ class ComparisonTests(unittest.TestCase):
         self.assertIsNone(
             report["statistics"]["baseline"]["format_success_rate"]
         )
+
+    def test_second_step_errors_are_preserved_and_comparison_continues(
+        self,
+    ) -> None:
+        for bad_answer, status in (
+            ("not json", "invalid_response"),
+            (OpenAIError("Unavailable"), "api_error"),
+        ):
+            with self.subTest(status=status):
+                replies = [
+                    success_replies()[0],
+                    bad_answer,
+                    *success_replies() * 8,
+                ]
+                report = compare_prompts(INPUTS, ScriptedClient(replies))
+                self.assertEqual(report["runs"][0]["status"], status)
+                self.assertEqual(
+                    sum(r["status"] == "ok" for r in report["runs"]), 8
+                )
 
     def test_no_winner_when_every_model_output_is_invalid(self) -> None:
         report = compare_prompts(

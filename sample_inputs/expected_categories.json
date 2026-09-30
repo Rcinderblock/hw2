@@ -1,0 +1,12 @@
+{
+  "01_meeting": "general_question",
+  "02_study": "general_question",
+  "03_support": "support",
+  "04_positive_feedback": "feedback",
+  "05_negative_feedback": "feedback",
+  "06_connection": "support",
+  "07_refund": "complaint",
+  "08_billing": "complaint",
+  "09_purchase": "sales",
+  "10_subscription": "sales"
+}

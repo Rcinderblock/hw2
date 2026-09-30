@@ -1,4 +1,4 @@
-"""End-to-end local checks of CLI output using a clearly marked test client."""
+"""Local checks of batch output and filtering with scripted model replies."""
 
 import io
 import json
@@ -8,16 +8,16 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
+from helpers import ScriptedClient, result_payload, success_replies
 from openai import OpenAIError
-from test_comparison import VALID_RESPONSE, ScriptedClient
 
 import compare_prompts
 import main
 
 
 class CLITests(unittest.TestCase):
-    def test_demo_uses_selected_prompt_and_saves_five_results(self) -> None:
-        client = ScriptedClient([VALID_RESPONSE] * 5)
+    def test_demo_uses_selected_prompt_and_saves_ten_results(self) -> None:
+        client = ScriptedClient(success_replies() * 10)
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "nested" / "demo.json"
             argv = [
@@ -36,26 +36,25 @@ class CLITests(unittest.TestCase):
             ):
                 self.assertEqual(main.main(), 0)
             results = json.loads(output.read_text(encoding="utf-8"))
-            self.assertEqual(len(results), 5)
+            self.assertEqual(len(results), 10)
             self.assertTrue(
-                all(set(json.loads(VALID_RESPONSE)) <= set(r) for r in results)
+                all(set(result_payload()) <= set(r) for r in results)
             )
             self.assertEqual(results, json.loads(stdout.getvalue()))
             self.assertTrue(
-                all("Example input:" in system for system, _ in client.calls)
+                all(
+                    "Example input:" in system
+                    for system, _, schema in client.calls
+                    if schema.__name__ == "TextClassification"
+                )
             )
+            self.assertEqual(len(client.calls), 20)
 
-    def test_comparison_cli_saves_all_fifteen_attempts(self) -> None:
-        client = ScriptedClient([VALID_RESPONSE] * 15)
+    def test_comparison_cli_saves_thirty_attempts(self) -> None:
+        client = ScriptedClient(success_replies() * 30)
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "comparison.json"
-            argv = [
-                "compare_prompts.py",
-                "--repeats",
-                "1",
-                "--output",
-                str(output),
-            ]
+            argv = ["compare_prompts.py", "--output", str(output)]
             with (
                 patch.object(
                     compare_prompts, "LLMClient", return_value=client
@@ -65,8 +64,9 @@ class CLITests(unittest.TestCase):
             ):
                 self.assertEqual(compare_prompts.main(), 0)
             report = json.loads(output.read_text(encoding="utf-8"))
-            self.assertEqual(len(report["runs"]), 15)
+            self.assertEqual(len(report["runs"]), 30)
             self.assertEqual(report["model"], "test-fixture")
+            self.assertEqual(len(client.calls), 60)
 
     def run_main(self, replies: list, extra_args: list[str]) -> tuple:
         client = ScriptedClient(replies)
@@ -81,21 +81,21 @@ class CLITests(unittest.TestCase):
 
     def test_category_and_sentiment_control_result_selection(self) -> None:
         categories = (
-            ("request", "neutral"),
-            ("question", "neutral"),
-            ("request", "negative"),
+            ("general_question", "neutral"),
+            ("general_question", "neutral"),
+            ("support", "negative"),
             ("feedback", "positive"),
             ("feedback", "negative"),
+            ("support", "neutral"),
+            ("complaint", "negative"),
+            ("complaint", "negative"),
+            ("sales", "neutral"),
+            ("sales", "positive"),
         )
         replies = [
-            json.dumps(
-                {
-                    **json.loads(VALID_RESPONSE),
-                    "category": cat,
-                    "sentiment": sent,
-                }
-            )
+            reply
             for cat, sent in categories
+            for reply in success_replies(category=cat, sentiment=sent)
         ]
         cases = (
             (
@@ -104,46 +104,71 @@ class CLITests(unittest.TestCase):
             ),
             (
                 ["--sentiment", "negative"],
-                ["03_support", "05_negative_feedback"],
+                [
+                    "03_support",
+                    "05_negative_feedback",
+                    "07_refund",
+                    "08_billing",
+                ],
             ),
             (
                 ["--category", "feedback", "--sentiment", "negative"],
                 ["05_negative_feedback"],
             ),
-            (["--category", "question", "--sentiment", "positive"], []),
+            (
+                ["--category", "general_question", "--sentiment", "positive"],
+                [],
+            ),
         )
         for args, expected_names in cases:
             with self.subTest(args=args):
                 code, results, client = self.run_main(replies, args)
                 self.assertEqual(code, 0)
                 self.assertEqual([r["name"] for r in results], expected_names)
-                self.assertEqual(len(client.calls), 5)
+                self.assertEqual(len(client.calls), 20)
 
     def test_broken_json_does_not_stop_remaining_examples(self) -> None:
         code, results, _ = self.run_main(
-            ["{bad json", *([VALID_RESPONSE] * 4)], []
+            ["{bad json", *success_replies() * 9], []
         )
         self.assertEqual(code, 1)
         self.assertIn("Некорректный JSON", results[0]["error"])
-        self.assertEqual(len(results), 5)
+        self.assertEqual(len(results), 10)
         self.assertTrue(all("final_answer" in r for r in results[1:]))
 
     def test_missing_fields_and_wrong_types_get_readable_errors(self) -> None:
-        payload = json.loads(VALID_RESPONSE)
-        del payload["category"]
-        payload["final_answer"] = 42
+        classification = json.loads(success_replies()[0])
+        del classification["category"]
+        classification["intent"] = 42
         code, results, _ = self.run_main(
-            [json.dumps(payload), *([VALID_RESPONSE] * 4)], []
+            [json.dumps(classification), *success_replies() * 9], []
         )
         self.assertEqual(code, 1)
         self.assertIn(
             "category: обязательное поле отсутствует", results[0]["error"]
         )
-        self.assertIn("final_answer: ожидалась строка", results[0]["error"])
+        self.assertIn("intent: ожидалась строка", results[0]["error"])
+
+    def test_second_step_failure_does_not_stop_remaining_examples(
+        self,
+    ) -> None:
+        for failure in (
+            json.dumps({"final_answer": 42}),
+            OpenAIError("Unavailable"),
+        ):
+            with self.subTest(failure=failure):
+                code, results, _ = self.run_main(
+                    [success_replies()[0], failure, *success_replies() * 9],
+                    [],
+                )
+                self.assertEqual(code, 1)
+                self.assertIn("error", results[0])
+                self.assertEqual(len(results), 10)
+                self.assertTrue(all("final_answer" in r for r in results[1:]))
 
     def test_api_errors_remain_visible_when_results_are_filtered(self) -> None:
         code, results, _ = self.run_main(
-            [OpenAIError("Unavailable"), *([VALID_RESPONSE] * 4)],
+            [OpenAIError("Unavailable"), *success_replies() * 9],
             ["--category", "feedback"],
         )
         self.assertEqual(code, 1)

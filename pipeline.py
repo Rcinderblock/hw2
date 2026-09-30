@@ -1,23 +1,32 @@
-"""Text -> selected prompt -> model -> validated result."""
+"""Text -> classification -> category instructions -> answer -> result."""
 
 import json
 import logging
-from typing import Protocol
+from typing import Protocol, TypeVar
 
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from prompts import (
     DEFAULT_PROMPT_VARIANT,
+    build_answer_system_prompt,
+    build_answer_user_prompt,
     build_user_prompt,
     get_prompt_variant,
 )
-from schemas import TextAnalysis
+from schemas import GeneratedAnswer, TextAnalysis, TextClassification
 
 logger = logging.getLogger(__name__)
+ResponseModel = TypeVar("ResponseModel", bound=BaseModel)
 
 
 class ModelClient(Protocol):
-    def generate(self, system_prompt: str, user_prompt: str) -> str: ...
+    def generate(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        *,
+        response_schema: type[BaseModel],
+    ) -> str: ...
 
 
 class InvalidModelResponse(ValueError):
@@ -56,6 +65,34 @@ def describe_schema_error(exc: ValidationError) -> str:
     return "Ответ не соответствует схеме: " + "; ".join(messages)
 
 
+def parse_model_response(
+    response: str, schema: type[ResponseModel], stage: str
+) -> ResponseModel:
+    if not response.strip():
+        raise InvalidModelResponse(
+            f"{stage}: модель вернула пустой ответ", response
+        )
+
+    try:
+        payload = json.loads(response)
+    except json.JSONDecodeError as exc:
+        raise InvalidModelResponse(
+            f"{stage}: Некорректный JSON: строка {exc.lineno}, "
+            f"столбец {exc.colno}",
+            response,
+        ) from exc
+
+    try:
+        result = schema.model_validate(payload)
+    except ValidationError as exc:
+        logger.warning("%s failed schema validation", stage)
+        raise InvalidModelResponse(
+            f"{stage}: {describe_schema_error(exc)}", response
+        ) from exc
+
+    return result
+
+
 def process_text(
     text: str,
     client: ModelClient,
@@ -65,28 +102,29 @@ def process_text(
         raise ValueError("Input text must not be empty")
 
     prompt = get_prompt_variant(prompt_variant)
-    logger.info("Processing input text with prompt %s", prompt_variant)
+    logger.info("Classifying input with prompt %s", prompt_variant)
     response = client.generate(
-        prompt.system_prompt, build_user_prompt(text, prompt_variant)
+        prompt.system_prompt,
+        build_user_prompt(text, prompt_variant),
+        response_schema=TextClassification,
     )
-    if not response.strip():
-        raise InvalidModelResponse("Модель вернула пустой ответ", response)
+    classification = parse_model_response(
+        response, TextClassification, "Классификация"
+    )
+    logger.info("Classification validated: %s", classification.category)
 
-    try:
-        payload = json.loads(response)
-    except json.JSONDecodeError as exc:
-        raise InvalidModelResponse(
-            f"Некорректный JSON: строка {exc.lineno}, столбец {exc.colno}",
-            response,
-        ) from exc
+    # Only a validated category may select the answer instructions.
+    answer_prompt = build_answer_system_prompt(classification.category)
+    logger.info("Generating answer for category %s", classification.category)
+    response = client.generate(
+        answer_prompt,
+        build_answer_user_prompt(text, classification),
+        response_schema=GeneratedAnswer,
+    )
+    answer = parse_model_response(
+        response, GeneratedAnswer, "Генерация ответа"
+    )
 
-    try:
-        result = TextAnalysis.model_validate(payload)
-    except ValidationError as exc:
-        logger.warning("Model response failed schema validation")
-        raise InvalidModelResponse(
-            describe_schema_error(exc), response
-        ) from exc
-
-    logger.info("Result validated")
+    result = TextAnalysis(**classification.model_dump(), **answer.model_dump())
+    logger.info("Final result validated")
     return result

@@ -12,7 +12,7 @@ from openai import OpenAIError
 
 from llm_client import LLMClient
 from pipeline import InvalidModelResponse, ModelClient, process_text
-from prompts import PROMPT_VARIANTS
+from prompts import ANSWER_INSTRUCTIONS, ANSWER_SYSTEM_PROMPT, PROMPT_VARIANTS
 
 EXAMPLES_DIR = Path(__file__).parent / "sample_inputs"
 
@@ -85,6 +85,8 @@ def compare_prompts(
         "prompts": {
             name: asdict(prompt) for name, prompt in PROMPT_VARIANTS.items()
         },
+        "answer_system_prompt": ANSWER_SYSTEM_PROMPT,
+        "answer_instructions": ANSWER_INSTRUCTIONS,
         "repeats": repeats,
         "inputs": [{"name": name, "text": text} for name, text in inputs],
         "comparison_complete": complete,

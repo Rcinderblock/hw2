@@ -2,19 +2,20 @@
 
 import unittest
 
+from helpers import result_payload
 from pydantic import ValidationError
 
-from schemas import RESPONSE_MAX_CHARS, SUMMARY_MAX_CHARS, TextAnalysis
+from schemas import (
+    INTENT_MAX_CHARS,
+    RESPONSE_MAX_CHARS,
+    SUMMARY_MAX_CHARS,
+    GeneratedAnswer,
+    TextAnalysis,
+)
 
 
 def valid_result() -> dict:
-    return {
-        "summary": "Кратко",
-        "category": "request",
-        "sentiment": "neutral",
-        "key_points": ["Один", "Два", "Три"],
-        "final_answer": "Ответ",
-    }
+    return result_payload()
 
 
 class SchemaTests(unittest.TestCase):
@@ -22,15 +23,18 @@ class SchemaTests(unittest.TestCase):
         payload = valid_result()
         payload.update(
             summary="я" * SUMMARY_MAX_CHARS,
+            intent="я" * INTENT_MAX_CHARS,
             final_answer="я" * RESPONSE_MAX_CHARS,
         )
         result = TextAnalysis.model_validate(payload)
         self.assertEqual(len(result.summary), SUMMARY_MAX_CHARS)
+        self.assertEqual(len(result.intent), INTENT_MAX_CHARS)
         self.assertEqual(len(result.final_answer), RESPONSE_MAX_CHARS)
 
     def test_overlong_outputs_are_rejected_without_truncation(self) -> None:
         for field, limit in (
             ("summary", SUMMARY_MAX_CHARS),
+            ("intent", INTENT_MAX_CHARS),
             ("final_answer", RESPONSE_MAX_CHARS),
         ):
             with self.subTest(field=field):
@@ -50,6 +54,7 @@ class SchemaTests(unittest.TestCase):
     def test_blank_fields_and_duplicate_points_are_rejected(self) -> None:
         cases = (
             {"summary": "   "},
+            {"intent": "\n"},
             {"final_answer": "\n"},
             {"key_points": ["Один", "Два", " "]},
             {"key_points": ["Один", " один ", "Три"]},
@@ -73,6 +78,12 @@ class SchemaTests(unittest.TestCase):
         payload = {**valid_result(), "key_points": ["Один", 2, "Три"]}
         with self.assertRaises(ValidationError):
             TextAnalysis.model_validate(payload)
+
+    def test_answer_cannot_replace_the_classification(self) -> None:
+        with self.assertRaises(ValidationError):
+            GeneratedAnswer.model_validate(
+                {"final_answer": "Ответ", "category": "sales"}
+            )
 
 
 if __name__ == "__main__":

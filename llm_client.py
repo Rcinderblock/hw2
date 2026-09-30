@@ -3,8 +3,7 @@
 import os
 
 from openai import OpenAI
-
-from schemas import TextAnalysis
+from pydantic import BaseModel
 
 
 class LLMClient:
@@ -19,7 +18,13 @@ class LLMClient:
         base_url = os.getenv("OPENAI_BASE_URL") or None
         self.client = OpenAI(api_key=api_key, base_url=base_url, timeout=30.0)
 
-    def generate(self, system_prompt: str, user_prompt: str) -> str:
+    def generate(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        *,
+        response_schema: type[BaseModel],
+    ) -> str:
         response = self.client.responses.create(
             model=self.model,
             instructions=system_prompt,
@@ -27,9 +32,9 @@ class LLMClient:
             text={
                 "format": {
                     "type": "json_schema",
-                    "name": "text_analysis",
+                    "name": response_schema.__name__,
                     "strict": True,
-                    "schema": TextAnalysis.model_json_schema(),
+                    "schema": response_schema.model_json_schema(),
                 }
             },
             store=False,
