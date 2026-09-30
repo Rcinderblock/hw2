@@ -5,7 +5,12 @@ import unittest
 from unittest.mock import patch
 
 from llm_client import LLMClient
-from schemas import GeneratedAnswer, TextClassification
+from schemas import (
+    GeneratedAnswer,
+    MeaningExtraction,
+    RequestClassification,
+    SelfCheckResult,
+)
 
 
 class LLMClientTests(unittest.TestCase):
@@ -18,16 +23,22 @@ class LLMClientTests(unittest.TestCase):
             client = LLMClient()
             for schema, fields in (
                 (
-                    TextClassification,
+                    MeaningExtraction,
+                    {"summary", "key_points"},
+                ),
+                (
+                    RequestClassification,
                     {
-                        "summary",
                         "category",
                         "intent",
                         "sentiment",
-                        "key_points",
                     },
                 ),
                 (GeneratedAnswer, {"final_answer"}),
+                (
+                    SelfCheckResult,
+                    {"passed", "contradictions", "missing_details"},
+                ),
             ):
                 with self.subTest(schema=schema.__name__):
                     self.assertEqual(

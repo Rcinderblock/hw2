@@ -3,12 +3,12 @@
 import unittest
 from collections import Counter
 
-from helpers import ScriptedClient, success_replies
+from helpers import ScriptedClient, check_payload, success_replies
 from openai import OpenAIError
 
 from compare_prompts import compare_prompts
 from prompts import PROMPT_VARIANTS, build_user_prompt
-from schemas import TextClassification
+from schemas import MeaningExtraction
 
 INPUTS = [
     ("first", "Первый текст"),
@@ -33,10 +33,10 @@ class ComparisonTests(unittest.TestCase):
         actual = Counter(
             (system, user)
             for system, user, schema in client.calls
-            if schema is TextClassification
+            if schema is MeaningExtraction
         )
         self.assertEqual(actual, expected)
-        self.assertEqual(len(client.calls), 36)
+        self.assertEqual(len(client.calls), 72)
         self.assertEqual(len(report["runs"]), 18)
         self.assertEqual(report["model"], "test-fixture")
         self.assertTrue(report["comparison_complete"])
@@ -75,17 +75,17 @@ class ComparisonTests(unittest.TestCase):
             report["statistics"]["baseline"]["format_success_rate"]
         )
 
-    def test_second_step_errors_are_preserved_and_comparison_continues(
+    def test_later_step_errors_are_preserved_and_comparison_continues(
         self,
     ) -> None:
-        for bad_answer, status in (
-            ("not json", "invalid_response"),
-            (OpenAIError("Unavailable"), "api_error"),
+        for index, failure, status in (
+            (2, "not json", "invalid_response"),
+            (3, OpenAIError("Unavailable"), "api_error"),
         ):
             with self.subTest(status=status):
                 replies = [
-                    success_replies()[0],
-                    bad_answer,
+                    *success_replies()[:index],
+                    failure,
                     *success_replies() * 8,
                 ]
                 report = compare_prompts(INPUTS, ScriptedClient(replies))
@@ -93,6 +93,23 @@ class ComparisonTests(unittest.TestCase):
                 self.assertEqual(
                     sum(r["status"] == "ok" for r in report["runs"]), 8
                 )
+
+    def test_self_check_failure_is_distinct_from_broken_format(self) -> None:
+        verdict = check_payload(
+            passed=False,
+            contradictions=["Ответ противоречит исходному тексту."],
+        )
+        replies = [
+            *success_replies(self_check=verdict),
+            *success_replies() * 8,
+        ]
+        report = compare_prompts(INPUTS, ScriptedClient(replies))
+        self.assertEqual(report["runs"][0]["status"], "self_check_failed")
+        self.assertEqual(report["runs"][0]["result"]["self_check"], verdict)
+        stats = report["statistics"]["baseline"]
+        self.assertEqual(stats["self_check_failures"], 1)
+        self.assertEqual(stats["format_success_rate"], 1)
+        self.assertEqual(stats["invalid_responses"], 0)
 
     def test_no_winner_when_every_model_output_is_invalid(self) -> None:
         report = compare_prompts(

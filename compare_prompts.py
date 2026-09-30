@@ -12,7 +12,13 @@ from openai import OpenAIError
 
 from llm_client import LLMClient
 from pipeline import InvalidModelResponse, ModelClient, process_text
-from prompts import ANSWER_INSTRUCTIONS, ANSWER_SYSTEM_PROMPT, PROMPT_VARIANTS
+from prompts import (
+    ANSWER_INSTRUCTIONS,
+    ANSWER_SYSTEM_PROMPT,
+    CLASSIFICATION_SYSTEM_PROMPT,
+    PROMPT_VARIANTS,
+    SELF_CHECK_SYSTEM_PROMPT,
+)
 
 EXAMPLES_DIR = Path(__file__).parent / "sample_inputs"
 
@@ -35,7 +41,12 @@ def compare_prompts(
                 run = {"variant": variant, "input": name, "repeat": repeat}
                 try:
                     result = process_text(text, client, variant)
-                    run.update(status="ok", result=result.model_dump())
+                    run.update(
+                        status="ok"
+                        if result.self_check.passed
+                        else "self_check_failed",
+                        result=result.model_dump(),
+                    )
                 except InvalidModelResponse as exc:
                     run.update(
                         status="invalid_response",
@@ -49,7 +60,11 @@ def compare_prompts(
     statistics = {}
     for variant in PROMPT_VARIANTS:
         attempts = [run for run in runs if run["variant"] == variant]
-        valid = [run["result"] for run in attempts if run["status"] == "ok"]
+        valid = [
+            run["result"]
+            for run in attempts
+            if run["status"] in ("ok", "self_check_failed")
+        ]
         invalid = sum(run["status"] == "invalid_response" for run in attempts)
         api_errors = sum(run["status"] == "api_error" for run in attempts)
         completed = len(valid) + invalid
@@ -58,6 +73,9 @@ def compare_prompts(
             "valid": len(valid),
             "invalid_responses": invalid,
             "api_errors": api_errors,
+            "self_check_failures": sum(
+                run["status"] == "self_check_failed" for run in attempts
+            ),
             "format_success_rate": len(valid) / completed
             if completed
             else None,
@@ -86,6 +104,8 @@ def compare_prompts(
             name: asdict(prompt) for name, prompt in PROMPT_VARIANTS.items()
         },
         "answer_system_prompt": ANSWER_SYSTEM_PROMPT,
+        "classification_system_prompt": CLASSIFICATION_SYSTEM_PROMPT,
+        "self_check_system_prompt": SELF_CHECK_SYSTEM_PROMPT,
         "answer_instructions": ANSWER_INSTRUCTIONS,
         "repeats": repeats,
         "inputs": [{"name": name, "text": text} for name, text in inputs],

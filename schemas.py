@@ -2,7 +2,13 @@
 
 from typing import Literal, get_args
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_validator,
+)
 
 SUMMARY_MAX_CHARS = 250
 RESPONSE_MAX_CHARS = 400
@@ -15,15 +21,14 @@ CATEGORIES = get_args(Category)
 SENTIMENTS = get_args(Sentiment)
 
 
-class TextClassification(BaseModel):
+class StructuredOutput(BaseModel):
     model_config = ConfigDict(
         extra="forbid", strict=True, str_strip_whitespace=True
     )
 
+
+class MeaningExtraction(StructuredOutput):
     summary: str = Field(min_length=1, max_length=SUMMARY_MAX_CHARS)
-    category: Category
-    intent: str = Field(min_length=1, max_length=INTENT_MAX_CHARS)
-    sentiment: Sentiment
     key_points: list[str] = Field(min_length=3, max_length=3)
 
     @field_validator("key_points")
@@ -37,13 +42,43 @@ class TextClassification(BaseModel):
         return stripped
 
 
-class GeneratedAnswer(BaseModel):
-    model_config = ConfigDict(
-        extra="forbid", strict=True, str_strip_whitespace=True
-    )
+class RequestClassification(StructuredOutput):
+    category: Category
+    intent: str = Field(min_length=1, max_length=INTENT_MAX_CHARS)
+    sentiment: Sentiment
 
+
+class TextClassification(MeaningExtraction):
+    category: Category
+    intent: str = Field(min_length=1, max_length=INTENT_MAX_CHARS)
+    sentiment: Sentiment
+
+
+class GeneratedAnswer(StructuredOutput):
     final_answer: str = Field(min_length=1, max_length=RESPONSE_MAX_CHARS)
+
+
+class SelfCheckResult(StructuredOutput):
+    passed: bool
+    contradictions: list[str]
+    missing_details: list[str]
+
+    @field_validator("contradictions", "missing_details")
+    @classmethod
+    def nonempty_issues(cls, issues: list[str]) -> list[str]:
+        stripped = [issue.strip() for issue in issues]
+        if any(not issue for issue in stripped):
+            raise ValueError("замечания проверки не должны быть пустыми")
+        return stripped
+
+    @model_validator(mode="after")
+    def verdict_matches_issues(self) -> "SelfCheckResult":
+        expected = not (self.contradictions or self.missing_details)
+        if self.passed != expected:
+            raise ValueError("passed должен соответствовать наличию замечаний")
+        return self
 
 
 class TextAnalysis(TextClassification):
     final_answer: str = Field(min_length=1, max_length=RESPONSE_MAX_CHARS)
+    self_check: SelfCheckResult

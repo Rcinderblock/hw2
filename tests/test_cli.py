@@ -8,7 +8,12 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
-from helpers import ScriptedClient, result_payload, success_replies
+from helpers import (
+    ScriptedClient,
+    check_payload,
+    result_payload,
+    success_replies,
+)
 from openai import OpenAIError
 
 import compare_prompts
@@ -45,10 +50,10 @@ class CLITests(unittest.TestCase):
                 all(
                     "Example input:" in system
                     for system, _, schema in client.calls
-                    if schema.__name__ == "TextClassification"
+                    if schema.__name__ == "MeaningExtraction"
                 )
             )
-            self.assertEqual(len(client.calls), 20)
+            self.assertEqual(len(client.calls), 40)
 
     def test_comparison_cli_saves_thirty_attempts(self) -> None:
         client = ScriptedClient(success_replies() * 30)
@@ -66,7 +71,7 @@ class CLITests(unittest.TestCase):
             report = json.loads(output.read_text(encoding="utf-8"))
             self.assertEqual(len(report["runs"]), 30)
             self.assertEqual(report["model"], "test-fixture")
-            self.assertEqual(len(client.calls), 60)
+            self.assertEqual(len(client.calls), 120)
 
     def run_main(self, replies: list, extra_args: list[str]) -> tuple:
         client = ScriptedClient(replies)
@@ -125,7 +130,7 @@ class CLITests(unittest.TestCase):
                 code, results, client = self.run_main(replies, args)
                 self.assertEqual(code, 0)
                 self.assertEqual([r["name"] for r in results], expected_names)
-                self.assertEqual(len(client.calls), 20)
+                self.assertEqual(len(client.calls), 40)
 
     def test_broken_json_does_not_stop_remaining_examples(self) -> None:
         code, results, _ = self.run_main(
@@ -137,11 +142,16 @@ class CLITests(unittest.TestCase):
         self.assertTrue(all("final_answer" in r for r in results[1:]))
 
     def test_missing_fields_and_wrong_types_get_readable_errors(self) -> None:
-        classification = json.loads(success_replies()[0])
+        classification = json.loads(success_replies()[1])
         del classification["category"]
         classification["intent"] = 42
         code, results, _ = self.run_main(
-            [json.dumps(classification), *success_replies() * 9], []
+            [
+                success_replies()[0],
+                json.dumps(classification),
+                *success_replies() * 9,
+            ],
+            [],
         )
         self.assertEqual(code, 1)
         self.assertIn(
@@ -149,22 +159,45 @@ class CLITests(unittest.TestCase):
         )
         self.assertIn("intent: ожидалась строка", results[0]["error"])
 
-    def test_second_step_failure_does_not_stop_remaining_examples(
+    def test_later_step_failure_does_not_stop_remaining_examples(
         self,
     ) -> None:
-        for failure in (
-            json.dumps({"final_answer": 42}),
-            OpenAIError("Unavailable"),
+        for index, failure in (
+            (2, json.dumps({"final_answer": 42})),
+            (3, OpenAIError("Unavailable")),
         ):
             with self.subTest(failure=failure):
                 code, results, _ = self.run_main(
-                    [success_replies()[0], failure, *success_replies() * 9],
+                    [
+                        *success_replies()[:index],
+                        failure,
+                        *success_replies() * 9,
+                    ],
                     [],
                 )
                 self.assertEqual(code, 1)
                 self.assertIn("error", results[0])
                 self.assertEqual(len(results), 10)
                 self.assertTrue(all("final_answer" in r for r in results[1:]))
+
+    def test_failed_self_check_survives_filters_and_batch_continues(
+        self,
+    ) -> None:
+        verdict = check_payload(
+            passed=False, missing_details=["Не учтён срок до утра."]
+        )
+        replies = [
+            *success_replies(self_check=verdict),
+            *success_replies(category="feedback") * 9,
+        ]
+        code, results, client = self.run_main(
+            replies, ["--category", "feedback", "--sentiment", "positive"]
+        )
+        self.assertEqual(code, 1)
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["self_check"], verdict)
+        self.assertIn("final_answer", results[0])
+        self.assertEqual(len(client.calls), 40)
 
     def test_api_errors_remain_visible_when_results_are_filtered(self) -> None:
         code, results, _ = self.run_main(

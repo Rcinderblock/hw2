@@ -8,7 +8,7 @@ from helpers import ScriptedClient, success_replies
 
 from main import EXAMPLES_DIR
 from pipeline import process_text
-from schemas import CATEGORIES, GeneratedAnswer, TextClassification
+from schemas import CATEGORIES, GeneratedAnswer, RequestClassification
 
 
 class RoutingTests(unittest.TestCase):
@@ -27,11 +27,11 @@ class RoutingTests(unittest.TestCase):
             with self.subTest(category=category):
                 client = ScriptedClient(success_replies(category=category))
                 result = process_text(source, client)
-                first_system, _, first_schema = client.calls[0]
-                second_system, second_user, second_schema = client.calls[1]
+                first_system, _, first_schema = client.calls[1]
+                second_system, second_user, second_schema = client.calls[2]
                 classification_prompts.add(first_system)
                 answer_prompts.add(second_system)
-                self.assertIs(first_schema, TextClassification)
+                self.assertIs(first_schema, RequestClassification)
                 self.assertIs(second_schema, GeneratedAnswer)
                 self.assertIn(instruction, second_system)
                 context = json.loads(second_user.split("\n", 1)[1])
@@ -52,7 +52,7 @@ class RoutingTests(unittest.TestCase):
             success_replies(category="complaint", intent=intent)
         )
         result = process_text("Прошу разобраться с оплатой.", client)
-        context = json.loads(client.calls[1][1].split("\n", 1)[1])
+        context = json.loads(client.calls[2][1].split("\n", 1)[1])
         self.assertEqual(context["classification"]["intent"], intent)
         self.assertEqual(result.intent, intent)
 
@@ -63,7 +63,7 @@ class RoutingTests(unittest.TestCase):
                 success_replies(category="feedback", sentiment=sentiment)
             )
             process_text("Отзыв о редакторе", client)
-            answer_prompts.add(client.calls[1][0])
+            answer_prompts.add(client.calls[2][0])
         self.assertEqual(len(answer_prompts), 1)
 
     def test_ten_examples_cover_each_category_twice(self) -> None:
@@ -84,10 +84,10 @@ class RoutingTests(unittest.TestCase):
                 source = samples[name].read_text(encoding="utf-8")
                 client = ScriptedClient(success_replies(category=category))
                 result = process_text(source, client)
-                context = json.loads(client.calls[1][1].split("\n", 1)[1])
+                context = json.loads(client.calls[2][1].split("\n", 1)[1])
                 self.assertEqual(context["source_text"], source)
                 self.assertEqual(result.category, category)
-                self.assertEqual(len(client.calls), 2)
+                self.assertEqual(len(client.calls), 4)
 
 
 if __name__ == "__main__":

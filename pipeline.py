@@ -1,4 +1,4 @@
-"""Text -> classification -> category instructions -> answer -> result."""
+"""Extract meaning -> classify -> build fields -> answer -> self-check."""
 
 import json
 import logging
@@ -7,13 +7,24 @@ from typing import Protocol, TypeVar
 from pydantic import BaseModel, ValidationError
 
 from prompts import (
+    CLASSIFICATION_SYSTEM_PROMPT,
     DEFAULT_PROMPT_VARIANT,
+    SELF_CHECK_SYSTEM_PROMPT,
     build_answer_system_prompt,
     build_answer_user_prompt,
+    build_classification_user_prompt,
+    build_self_check_user_prompt,
     build_user_prompt,
     get_prompt_variant,
 )
-from schemas import GeneratedAnswer, TextAnalysis, TextClassification
+from schemas import (
+    GeneratedAnswer,
+    MeaningExtraction,
+    RequestClassification,
+    SelfCheckResult,
+    TextAnalysis,
+    TextClassification,
+)
 
 logger = logging.getLogger(__name__)
 ResponseModel = TypeVar("ResponseModel", bound=BaseModel)
@@ -102,29 +113,66 @@ def process_text(
         raise ValueError("Input text must not be empty")
 
     prompt = get_prompt_variant(prompt_variant)
-    logger.info("Classifying input with prompt %s", prompt_variant)
+    logger.info("Шаг 1/5: извлечение смысла, промпт %s", prompt_variant)
     response = client.generate(
         prompt.system_prompt,
         build_user_prompt(text, prompt_variant),
-        response_schema=TextClassification,
+        response_schema=MeaningExtraction,
+    )
+    meaning = parse_model_response(
+        response, MeaningExtraction, "Извлечение смысла"
+    )
+
+    logger.info("Шаг 2/5: классификация по извлечённому смыслу")
+    response = client.generate(
+        CLASSIFICATION_SYSTEM_PROMPT,
+        build_classification_user_prompt(text, meaning),
+        response_schema=RequestClassification,
     )
     classification = parse_model_response(
-        response, TextClassification, "Классификация"
+        response, RequestClassification, "Классификация"
     )
-    logger.info("Classification validated: %s", classification.category)
+    logger.info(
+        "Категория: %s; цель: %s",
+        classification.category,
+        classification.intent,
+    )
+
+    logger.info("Шаг 3/5: сборка и проверка структурированных полей")
+    fields = TextClassification(
+        **meaning.model_dump(), **classification.model_dump()
+    )
 
     # Only a validated category may select the answer instructions.
-    answer_prompt = build_answer_system_prompt(classification.category)
-    logger.info("Generating answer for category %s", classification.category)
+    answer_prompt = build_answer_system_prompt(fields.category)
+    logger.info("Шаг 4/5: генерация ответа, категория %s", fields.category)
     response = client.generate(
         answer_prompt,
-        build_answer_user_prompt(text, classification),
+        build_answer_user_prompt(text, fields),
         response_schema=GeneratedAnswer,
     )
     answer = parse_model_response(
         response, GeneratedAnswer, "Генерация ответа"
     )
 
-    result = TextAnalysis(**classification.model_dump(), **answer.model_dump())
-    logger.info("Final result validated")
+    logger.info("Шаг 5/5: проверка результата по исходному тексту")
+    response = client.generate(
+        SELF_CHECK_SYSTEM_PROMPT,
+        build_self_check_user_prompt(text, fields, answer),
+        response_schema=SelfCheckResult,
+    )
+    self_check = parse_model_response(
+        response, SelfCheckResult, "Проверка результата"
+    )
+    result = TextAnalysis(
+        **fields.model_dump(), **answer.model_dump(), self_check=self_check
+    )
+    if self_check.passed:
+        logger.info("Проверка пройдена; итоговый результат готов")
+    else:
+        logger.warning(
+            "Проверка не пройдена: противоречия=%s; потерянные детали=%s",
+            self_check.contradictions,
+            self_check.missing_details,
+        )
     return result

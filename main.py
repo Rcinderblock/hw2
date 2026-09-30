@@ -72,9 +72,17 @@ def main() -> int:
         try:
             logging.info("Processing %s", name)
             analysis = process_text(text, client, args.prompt_variant)
-            if args.category and analysis.category != args.category:
+            if (
+                analysis.self_check.passed
+                and args.category
+                and analysis.category != args.category
+            ):
                 continue
-            if args.sentiment and analysis.sentiment != args.sentiment:
+            if (
+                analysis.self_check.passed
+                and args.sentiment
+                and analysis.sentiment != args.sentiment
+            ):
                 continue
             results.append({"name": name, **analysis.model_dump()})
         except (OpenAIError, ValueError) as exc:
@@ -91,7 +99,11 @@ def main() -> int:
             logging.error("Cannot write output: %s", exc)
             return 1
 
-    return 1 if any("error" in result for result in results) else 0
+    failed = any(
+        "error" in result or not result["self_check"]["passed"]
+        for result in results
+    )
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":
