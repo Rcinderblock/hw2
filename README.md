@@ -60,6 +60,10 @@ cp .env.example .env
 Для совместимого сервиса задайте `OPENAI_BASE_URL`; нужны Responses API
 и поддержка JSON-схемы. Переменные также можно задать в окружении.
 
+Для OpenRouter задайте в `.env` `OPENAI_BASE_URL=https://openrouter.ai/api/v1`
+и `OPENAI_MODEL=nvidia/nemotron-3-super-120b-a12b:free`. В `OPENAI_API_KEY`
+укажите ключ OpenRouter. Доступность бесплатной модели и лимиты зависят от сервиса.
+
 ```bash
 python main.py --text "Помоги составить план встречи"
 python main.py --file sample_inputs/03_support.txt
@@ -103,11 +107,16 @@ python main.py --demo --category feedback --sentiment negative
 
 ```bash
 python -m unittest discover -s tests -v
-python compare_prompts.py --output output/comparison.json
+python compare_prompts.py --samples 03_support 07_refund 09_purchase --output output/comparison.json
 ```
 
-Тесты работают без ключа. Сравнение требует ключа: при успешных шагах
-120 вызовов, повторы увеличивают их число. Реальное сравнение ещё не проведено;
-`explicit` выбран предварительно, объяснение — в `docs/prompts.md`.
+Тесты работают без ключа. Сравнение требует ключа: три выбранных текста
+дают 36 основных вызовов; без `--samples` используются десять текстов — 120
+вызовов. Повторы увеличивают их число.
+
+Сравнение трёх вариантов выполнено 1 октября 2026 года на одной бесплатной
+модели. По отдельному разбору содержания выбран `example`.
+[Результаты и обоснование](docs/prompts.md),
+[полные ответы и оценки](docs/prompt_comparison.json).
 `--prompt-variant baseline|explicit|example` выбирает первый промпт в `main.py`.
 Ожидаемые категории не передаются модели. Результаты из `output/` исключены из Git.

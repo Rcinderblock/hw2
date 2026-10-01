@@ -1,12 +1,16 @@
 """Comparison checks; fixtures do not establish real model quality."""
 
+import io
+import json
 import unittest
 from collections import Counter
+from contextlib import redirect_stdout
+from unittest.mock import patch
 
 from helpers import ScriptedClient, check_payload, success_replies
 from openai import OpenAIError
 
-from compare_prompts import compare_prompts
+from compare_prompts import compare_prompts, main
 from prompts import PROMPT_VARIANTS, build_user_prompt
 from schemas import MeaningExtraction
 
@@ -127,6 +131,41 @@ class ComparisonTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     compare_prompts(inputs, client, repeats)
                 self.assertEqual(client.calls, [])
+
+    def test_cli_compares_only_requested_samples(self) -> None:
+        client = ScriptedClient(success_replies() * 6)
+        output = io.StringIO()
+        with (
+            patch(
+                "sys.argv",
+                ["compare_prompts.py", "--samples", "third", "first"],
+            ),
+            patch("compare_prompts.load_sample_inputs", return_value=INPUTS),
+            patch("compare_prompts.LLMClient", return_value=client),
+            redirect_stdout(output),
+        ):
+            self.assertEqual(main(), 0)
+        report = json.loads(output.getvalue())
+        self.assertEqual(
+            [item["name"] for item in report["inputs"]], ["third", "first"]
+        )
+        self.assertEqual(len(client.calls), 24)
+
+    def test_cli_rejects_bad_samples_before_api_calls(self) -> None:
+        for names in (["absent"], ["first", "first"]):
+            with (
+                self.subTest(names=names),
+                patch("sys.argv", ["compare_prompts.py", "--samples", *names]),
+                patch(
+                    "compare_prompts.load_sample_inputs", return_value=INPUTS
+                ),
+                patch("compare_prompts.LLMClient") as create_client,
+                patch("sys.stderr", new_callable=io.StringIO),
+            ):
+                with self.assertRaises(SystemExit) as exc:
+                    main()
+                self.assertEqual(exc.exception.code, 2)
+                create_client.assert_not_called()
 
 
 if __name__ == "__main__":

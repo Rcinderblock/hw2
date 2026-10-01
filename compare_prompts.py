@@ -130,6 +130,11 @@ def compare_prompts(
 def main() -> int:
     parser = argparse.ArgumentParser(description="Compare prompt formulations")
     parser.add_argument("--repeats", type=int, default=1)
+    parser.add_argument(
+        "--samples",
+        nargs="+",
+        help="Sample names to compare, for example 03_support 07_refund",
+    )
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     if args.repeats < 1:
@@ -141,6 +146,14 @@ def main() -> int:
     load_dotenv()
     try:
         inputs = load_sample_inputs(EXAMPLES_DIR)
+        if args.samples:
+            available = dict(inputs)
+            unknown = set(args.samples) - available.keys()
+            if unknown:
+                parser.error("Unknown samples: " + ", ".join(sorted(unknown)))
+            if len(args.samples) != len(set(args.samples)):
+                parser.error("Sample names must not repeat")
+            inputs = [(name, available[name]) for name in args.samples]
         validate_output_path(args.output, list(EXAMPLES_DIR.glob("*")))
         client = LLMClient()
         report = compare_prompts(inputs, client, args.repeats)
