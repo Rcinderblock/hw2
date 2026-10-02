@@ -1669,7 +1669,7 @@
     "self_check_passed": 10,
     "model_calls": 40,
     "automatic_checks": {
-      "environment": "fresh clone and separately installed dependencies",
+      "environment": "clean source copy and separately installed dependencies",
       "unit_tests": 84,
       "offline_scenarios": 5,
       "empty": {
@@ -1705,6 +1705,13 @@
         "started_at": "2026-10-02T21:06:55.302920+00:00",
         "finished_at": "2026-10-02T21:07:34.784164+00:00",
         "command": "python local_demo.py --samples 01_meeting"
+      },
+      "published_clone": {
+        "exit_code": 0,
+        "branch": "main",
+        "commit": "5bd7d4417910d03d89f74b68615cbf650063cbad",
+        "source_hashes_match": true,
+        "tracked_files": 44
       }
     }
   },
