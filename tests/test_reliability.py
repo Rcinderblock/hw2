@@ -166,6 +166,59 @@ class APIReliabilityTests(unittest.TestCase):
 
 
 class FormatRecoveryTests(unittest.TestCase):
+    def test_language_and_service_role_errors_use_fallback(self):
+        cases = (
+            (
+                0,
+                json.dumps(
+                    {
+                        "summary": "Customer needs help with the application.",
+                        "key_points": ["A", "B", "C"],
+                    }
+                ),
+            ),
+            (
+                2,
+                json.dumps(
+                    {"final_answer": "Мы передадим ваш отзыв команде."}
+                ),
+            ),
+        )
+        for index, bad in cases:
+            with self.subTest(index=index):
+                replies = success_replies()
+                client = ScriptedClient(
+                    [*replies[:index], bad, *replies[index:]]
+                )
+                result = process_text(
+                    "Приложение не сохраняет данные, нужен совет.", client
+                )
+                self.assertTrue(result.self_check.passed)
+                self.assertEqual(len(client.calls), 5)
+                self.assertIn(
+                    "Validation problem:", client.calls[index + 1][0]
+                )
+
+    def test_english_input_and_technical_names_are_not_language_errors(self):
+        for source, summary in (
+            (
+                "I need help with the application.",
+                "The customer needs help with the application.",
+            ),
+            (
+                "Мне нужна помощь с Python и настройкой приложения.",
+                "Автор просит помочь с Python.",
+            ),
+        ):
+            with self.subTest(source=source):
+                replies = success_replies()
+                extraction = json.loads(replies[0])
+                extraction["summary"] = summary
+                replies[0] = json.dumps(extraction)
+                client = ScriptedClient(replies)
+                process_text(source, client)
+                self.assertEqual(len(client.calls), 4)
+
     def test_ambiguous_or_nonstandard_json_uses_fallback(self):
         cases = (
             '{"summary":"first","summary":"second",'
@@ -213,6 +266,7 @@ class FormatRecoveryTests(unittest.TestCase):
                 ),
             ),
             (2, json.dumps({"final_answer": "x" * 401})),
+            (2, json.dumps({"final_answer": "x" * 400})),
         ):
             with self.subTest(index=index):
                 replies = success_replies()
@@ -245,6 +299,38 @@ class FormatRecoveryTests(unittest.TestCase):
         )
         self.assertNotIn("self_check", partial)
         self.assertIn("Проверка результата", str(caught.exception))
+
+    def test_failure_during_content_repair_never_reuses_an_old_verdict(self):
+        replies = success_replies()
+        rejected = {
+            "passed": False,
+            "contradictions": ["Возврат ещё не выполнен."],
+            "missing_details": [],
+        }
+        for failure_at in (4, 5):
+            with self.subTest(failure_at=failure_at):
+                sequence = [*replies[:3], json.dumps(rejected)]
+                if failure_at == 5:
+                    sequence.append(
+                        json.dumps(
+                            {"final_answer": "Запросите возврат в поддержке."}
+                        )
+                    )
+                client = ScriptedClient(
+                    [*sequence, OpenAIError("Unavailable")]
+                )
+                with self.assertRaises(PipelineAPIError) as caught:
+                    process_text("Хочу вернуть деньги.", client)
+                partial = caught.exception.partial_result
+                if failure_at == 4:
+                    self.assertEqual(partial["self_check"], rejected)
+                else:
+                    self.assertEqual(
+                        partial["final_answer"],
+                        "Запросите возврат в поддержке.",
+                    )
+                    self.assertNotIn("self_check", partial)
+                self.assertEqual(len(client.calls), failure_at + 1)
 
 
 if __name__ == "__main__":

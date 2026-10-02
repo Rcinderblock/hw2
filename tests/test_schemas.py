@@ -24,12 +24,20 @@ class SchemaTests(unittest.TestCase):
         payload.update(
             summary="я" * SUMMARY_MAX_CHARS,
             intent="я" * INTENT_MAX_CHARS,
-            final_answer="я" * RESPONSE_MAX_CHARS,
+            final_answer="я" * (RESPONSE_MAX_CHARS - 1) + ".",
         )
         result = TextAnalysis.model_validate(payload)
         self.assertEqual(len(result.summary), SUMMARY_MAX_CHARS)
         self.assertEqual(len(result.intent), INTENT_MAX_CHARS)
         self.assertEqual(len(result.final_answer), RESPONSE_MAX_CHARS)
+
+    def test_cut_off_answer_is_rejected_by_both_public_schemas(self):
+        for schema in (GeneratedAnswer, TextAnalysis):
+            with self.subTest(schema=schema):
+                payload = valid_result() if schema is TextAnalysis else {}
+                payload["final_answer"] = "я" * RESPONSE_MAX_CHARS
+                with self.assertRaisesRegex(ValidationError, "границе длины"):
+                    schema.model_validate(payload)
 
     def test_overlong_outputs_are_rejected_without_truncation(self) -> None:
         for field, limit in (

@@ -14,6 +14,84 @@ from schemas import (
 
 
 class LLMClientTests(unittest.TestCase):
+    def test_reasoning_setting_is_optional_and_invalid_values_fail_early(self):
+        for value in ("", "none", "low", "high", "invalid"):
+            with (
+                self.subTest(value=value),
+                patch.dict(
+                    os.environ,
+                    {
+                        "OPENAI_API_KEY": "test-only-key",
+                        "OPENAI_REASONING_EFFORT": value,
+                    },
+                ),
+                patch("llm_client.OpenAI") as sdk,
+            ):
+                if value == "invalid":
+                    with self.assertRaisesRegex(
+                        ValueError, "OPENAI_REASONING_EFFORT"
+                    ):
+                        LLMClient()
+                    sdk.assert_not_called()
+                    continue
+                sdk.return_value.responses.create.return_value.output_text = (
+                    "{}"
+                )
+                LLMClient().generate(
+                    "Rules", "Text", response_schema=MeaningExtraction
+                )
+                request = sdk.return_value.responses.create.call_args.kwargs
+                self.assertEqual(
+                    request.get("reasoning"),
+                    {"effort": value} if value else None,
+                )
+
+    def test_invalid_temperature_fails_before_creating_a_client(self):
+        for value in ("not a number", "nan", "inf", "-0.1", "2.1"):
+            with (
+                self.subTest(value=value),
+                patch.dict(
+                    os.environ,
+                    {
+                        "OPENAI_API_KEY": "test-only-key",
+                        "OPENAI_TEMPERATURE": value,
+                    },
+                ),
+                patch("llm_client.OpenAI") as sdk,
+            ):
+                with self.assertRaisesRegex(ValueError, "OPENAI_TEMPERATURE"):
+                    LLMClient()
+                sdk.assert_not_called()
+
+    def test_optional_temperature_is_sent_only_when_configured(self):
+        for value, expected in (
+            ("", None),
+            ("0", 0.0),
+            ("0.5", 0.5),
+            ("2", 2.0),
+        ):
+            with (
+                self.subTest(value=value),
+                patch.dict(
+                    os.environ,
+                    {
+                        "OPENAI_API_KEY": "test-only-key",
+                        "OPENAI_TEMPERATURE": value,
+                    },
+                ),
+                patch("llm_client.OpenAI") as sdk,
+            ):
+                sdk.return_value.responses.create.return_value.output_text = (
+                    "{}"
+                )
+                LLMClient().generate(
+                    "Rules", "Text", response_schema=MeaningExtraction
+                )
+                options = sdk.return_value.responses.create.call_args.kwargs
+                self.assertEqual(options.get("temperature"), expected)
+                if expected is None:
+                    self.assertNotIn("temperature", options)
+
     def test_each_step_sends_its_own_json_schema(self) -> None:
         with (
             patch.dict(os.environ, {"OPENAI_API_KEY": "test-only-key"}),

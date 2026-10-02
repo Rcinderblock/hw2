@@ -2,6 +2,7 @@
 
 import json
 import logging
+import re
 from typing import Protocol, TypeVar
 
 from openai import OpenAIError
@@ -11,6 +12,7 @@ from prompts import (
     CLASSIFICATION_SYSTEM_PROMPT,
     DEFAULT_PROMPT_VARIANT,
     SELF_CHECK_SYSTEM_PROMPT,
+    build_answer_repair_user_prompt,
     build_answer_system_prompt,
     build_answer_user_prompt,
     build_classification_user_prompt,
@@ -141,6 +143,7 @@ def request_step(
     schema: type[ResponseModel],
     stage: str,
     partial_result: dict,
+    source_text: str,
 ) -> ResponseModel:
     for attempt in range(2):
         try:
@@ -152,6 +155,7 @@ def request_step(
             raise PipelineAPIError(f"{stage}: {exc}", partial_result) from exc
         try:
             result = parse_model_response(response, schema, stage)
+            check_output_context(result, source_text, response, stage)
             if attempt:
                 logger.info("%s: запасной промпт восстановил формат", stage)
             return result
@@ -166,6 +170,36 @@ def request_step(
                 system_prompt, str(exc)
             )
     raise AssertionError("Unreachable: every step returns or raises")
+
+
+def check_output_context(
+    result: BaseModel, source_text: str, response: str, stage: str
+) -> None:
+    russian_letters = len(re.findall(r"[А-Яа-яЁё]", source_text))
+    latin_letters = len(re.findall(r"[A-Za-z]", source_text))
+    if russian_letters >= 10 and russian_letters > latin_letters:
+        for field in ("summary", "final_answer"):
+            value = getattr(result, field, "")
+            if len(re.findall(r"[A-Za-z]", value)) > 30 and not re.search(
+                r"[А-Яа-яЁё]", value
+            ):
+                raise InvalidModelResponse(
+                    f"{stage}: поле {field} должно быть на языке исходника, "
+                    "по-русски",
+                    response,
+                )
+    answer = getattr(result, "final_answer", "")
+    # The assistant gives advice; it cannot act as the service operator.
+    if re.search(
+        r"\b(мы|просим|попросим|передадим|отменим|вернём|повысим)\b",
+        answer,
+        re.IGNORECASE,
+    ):
+        raise InvalidModelResponse(
+            f"{stage}: советуй действие пользователю, не отвечай от имени "
+            "сервиса; не используй первое лицо множественного числа",
+            response,
+        )
 
 
 def process_text(
@@ -185,6 +219,7 @@ def process_text(
         MeaningExtraction,
         "Извлечение смысла",
         {},
+        text,
     )
 
     logger.info("Шаг 2/5: классификация по извлечённому смыслу")
@@ -195,6 +230,7 @@ def process_text(
         RequestClassification,
         "Классификация",
         meaning.model_dump(),
+        text,
     )
     logger.info(
         "Категория: %s; цель: %s",
@@ -217,6 +253,7 @@ def process_text(
         GeneratedAnswer,
         "Генерация ответа",
         fields.model_dump(),
+        text,
     )
 
     logger.info("Шаг 5/5: проверка результата по исходному тексту")
@@ -227,7 +264,36 @@ def process_text(
         SelfCheckResult,
         "Проверка результата",
         {**fields.model_dump(), **answer.model_dump()},
+        text,
     )
+    if not self_check.passed:
+        logger.warning("Проверка отклонила ответ: %s", self_check.model_dump())
+        logger.info("Исправление ответа по замечаниям; максимум один повтор")
+        answer = request_step(
+            client,
+            answer_prompt,
+            build_answer_repair_user_prompt(
+                text, fields, answer, self_check.model_dump()
+            ),
+            GeneratedAnswer,
+            "Исправление ответа",
+            {
+                **fields.model_dump(),
+                **answer.model_dump(),
+                "self_check": self_check.model_dump(),
+            },
+            text,
+        )
+        logger.info("Повторная проверка исправленного ответа")
+        self_check = request_step(
+            client,
+            SELF_CHECK_SYSTEM_PROMPT,
+            build_self_check_user_prompt(text, fields, answer),
+            SelfCheckResult,
+            "Повторная проверка результата",
+            {**fields.model_dump(), **answer.model_dump()},
+            text,
+        )
     result = TextAnalysis(
         **fields.model_dump(), **answer.model_dump(), self_check=self_check
     )

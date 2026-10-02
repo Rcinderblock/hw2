@@ -57,11 +57,40 @@ class TextClassification(MeaningExtraction):
 class GeneratedAnswer(StructuredOutput):
     final_answer: str = Field(min_length=1, max_length=RESPONSE_MAX_CHARS)
 
+    @field_validator("final_answer")
+    @classmethod
+    def reject_cut_off_answer(cls, answer: str) -> str:
+        # Some compatible servers cut a string to the schema's length limit.
+        if len(answer) == RESPONSE_MAX_CHARS and answer[-1].isalnum():
+            raise ValueError(
+                "ответ заканчивается на границе длины без завершения фразы; "
+                "сформулируйте его короче"
+            )
+        return answer
+
 
 class SelfCheckResult(StructuredOutput):
-    passed: bool
-    contradictions: list[str]
-    missing_details: list[str]
+    passed: bool = Field(
+        description=(
+            "True, если результат не противоречит исходнику и сохраняет "
+            "его важные факты. Не оценивай полноту самого исходника. "
+            "Новые безопасные советы и уточняющие вопросы допустимы."
+        )
+    )
+    contradictions: list[str] = Field(
+        description=(
+            "Конкретные утверждения результата, противоречащие исходнику "
+            "или выдумывающие факты. Предложение будущего действия "
+            "пользователю само по себе не является противоречием."
+        )
+    )
+    missing_details: list[str] = Field(
+        description=(
+            "Только важные факты, которые явно ЕСТЬ в source_text, но "
+            "отсутствуют во ВСЕХ полях candidate_result. Если сведений "
+            "нет в самом исходнике, не добавляй их сюда. Иначе пустой список."
+        )
+    )
 
     @field_validator("contradictions", "missing_details")
     @classmethod
@@ -79,6 +108,5 @@ class SelfCheckResult(StructuredOutput):
         return self
 
 
-class TextAnalysis(TextClassification):
-    final_answer: str = Field(min_length=1, max_length=RESPONSE_MAX_CHARS)
+class TextAnalysis(TextClassification, GeneratedAnswer):
     self_check: SelfCheckResult

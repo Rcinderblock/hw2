@@ -95,6 +95,32 @@ class LLMClient:
             )
 
         self.model = (os.getenv("OPENAI_MODEL") or "gpt-4.1-mini").strip()
+        temperature = (os.getenv("OPENAI_TEMPERATURE") or "").strip()
+        self.generation_options = {}
+        if temperature:
+            try:
+                value = float(temperature)
+            except ValueError as exc:
+                raise ValueError(
+                    "OPENAI_TEMPERATURE must be between 0 and 2"
+                ) from exc
+            if not math.isfinite(value) or not 0 <= value <= 2:
+                raise ValueError("OPENAI_TEMPERATURE must be between 0 and 2")
+            self.generation_options["temperature"] = value
+        reasoning_effort = (os.getenv("OPENAI_REASONING_EFFORT") or "").strip()
+        if reasoning_effort:
+            if reasoning_effort not in {
+                "none",
+                "minimal",
+                "low",
+                "medium",
+                "high",
+            }:
+                raise ValueError(
+                    "OPENAI_REASONING_EFFORT must be none, minimal, low, "
+                    "medium, or high"
+                )
+            self.generation_options["reasoning"] = {"effort": reasoning_effort}
         base_url = os.getenv("OPENAI_BASE_URL") or None
         # Own the retry budget instead of multiplying it by SDK retries.
         self.client = OpenAI(
@@ -122,8 +148,10 @@ class LLMClient:
                             "schema": response_schema.model_json_schema(),
                         }
                     },
-                    max_output_tokens=1200,
+                    # This budget includes reasoning, not only the final JSON.
+                    max_output_tokens=4096,
                     store=False,
+                    **self.generation_options,
                 )
                 try:
                     text = response.output_text

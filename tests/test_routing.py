@@ -15,11 +15,11 @@ class RoutingTests(unittest.TestCase):
     def test_category_changes_instructions_for_the_same_source(self) -> None:
         source = "Помогите разобраться с моим обращением."
         expected_instructions = {
-            "support": "numbered troubleshooting steps",
-            "feedback": "Thank the author for feedback",
-            "complaint": "empathetic response",
-            "sales": "purchase-oriented answer",
-            "general_question": "Answer the question directly",
+            "support": "нумерованных шага диагностики",
+            "feedback": "Поблагодари за отзыв",
+            "complaint": "сочувственный ответ",
+            "sales": "ответ для выбора покупки",
+            "general_question": "Ответь на вопрос прямо",
         }
         classification_prompts = set()
         answer_prompts = set()

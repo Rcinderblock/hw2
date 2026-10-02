@@ -238,6 +238,7 @@ class CLITests(unittest.TestCase):
         )
         replies = [
             *success_replies(self_check=verdict),
+            *success_replies(self_check=verdict)[2:],
             *success_replies(category="feedback") * 9,
         ]
         code, results, client = self.run_main(
@@ -247,7 +248,7 @@ class CLITests(unittest.TestCase):
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0]["self_check"], verdict)
         self.assertIn("final_answer", results[0])
-        self.assertEqual(len(client.calls), 40)
+        self.assertEqual(len(client.calls), 42)
 
     def test_api_errors_remain_visible_when_results_are_filtered(self) -> None:
         code, results, _ = self.run_main(

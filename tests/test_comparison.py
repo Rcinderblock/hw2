@@ -107,6 +107,7 @@ class ComparisonTests(unittest.TestCase):
         )
         replies = [
             *success_replies(self_check=verdict),
+            *success_replies(self_check=verdict)[2:],
             *success_replies() * 8,
         ]
         report = compare_prompts(INPUTS, ScriptedClient(replies))

@@ -208,11 +208,38 @@ class PipelineTests(unittest.TestCase):
             contradictions=["Ответ утверждает, что возврат уже выполнен."],
             missing_details=["Не учтён срок до утра."],
         )
-        client = ScriptedClient(success_replies(self_check=verdict))
+        replies = success_replies(self_check=verdict)
+        client = ScriptedClient([*replies, *replies[2:]])
         result = process_text("Текст", client)
         self.assertEqual(result.self_check.model_dump(), verdict)
         self.assertEqual(result.final_answer, result_payload()["final_answer"])
-        self.assertEqual(len(client.calls), 4)
+        self.assertEqual(len(client.calls), 6)
+
+    def test_rejected_answer_is_corrected_and_checked_again(self) -> None:
+        verdict = check_payload(
+            passed=False, contradictions=["Отзыв не был передан команде."]
+        )
+        replies = success_replies(
+            category="feedback",
+            final_answer="Ваш отзыв передан команде.",
+            self_check=verdict,
+        )
+        correction = "Отправьте отзыв через форму обратной связи сервиса."
+        client = ScriptedClient(
+            [
+                *replies,
+                json.dumps({"final_answer": correction}),
+                json.dumps(check_payload()),
+            ]
+        )
+        result = process_text("Поиск стал медленнее.", client)
+        self.assertEqual(result.final_answer, correction)
+        self.assertTrue(result.self_check.passed)
+        context = json.loads(client.calls[4][1].split("\n", 1)[1])
+        self.assertEqual(context["review_issues"], verdict)
+        self.assertEqual(context["source_text"], "Поиск стал медленнее.")
+        self.assertIn(correction, client.calls[5][1])
+        self.assertEqual(len(client.calls), 6)
 
     def test_logs_show_all_five_stages_and_selected_category(self) -> None:
         client = ScriptedClient(
